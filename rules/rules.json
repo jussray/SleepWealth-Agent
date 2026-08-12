@@ -1,0 +1,17 @@
+{
+  "version": "0.1.0",
+  "floor_cash": 5.0,
+  "max_daily_loss": 100.0,
+  "max_position_size": 1000.0,
+  "approved_symbols": ["AAPL", "MSFT", "VTI"],
+  "modes": {
+    "truthmode": true,
+    "redteam": true,
+    "lindy": true
+  },
+  "ceiling": {
+    "current": 5.0,
+    "max": 1000.0,
+    "can_auto_increase": false
+  }
+}

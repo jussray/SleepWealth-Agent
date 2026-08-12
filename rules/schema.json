@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "trading-agent rules",
+  "type": "object",
+  "required": ["version", "floor_cash", "ceiling"],
+  "properties": {
+    "version": {"type": "string"},
+    "floor_cash": {"type": "number", "minimum": 0},
+    "max_daily_loss": {"type": "number", "minimum": 0},
+    "max_position_size": {"type": "number", "minimum": 0},
+    "approved_symbols": {"type": "array", "items": {"type": "string"}},
+    "modes": {
+      "type": "object",
+      "properties": {
+        "truthmode": {"type": "boolean"},
+        "redteam": {"type": "boolean"},
+        "lindy": {"type": "boolean"}
+      }
+    },
+    "ceiling": {
+      "type": "object",
+      "required": ["current", "can_auto_increase"],
+      "properties": {
+        "current": {"type": "number", "minimum": 0},
+        "max": {"type": "number", "minimum": 0},
+        "can_auto_increase": {"const": false}
+      }
+    }
+  }
+}
