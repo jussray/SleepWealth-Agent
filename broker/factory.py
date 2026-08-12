@@ -35,6 +35,9 @@ def get_broker(
     Raises ValueError for unknown brokers, or if live mode is requested
     from an adapter that is paper-only by construction.
     """
+    if not paper_only:
+        raise ValueError("Live broker execution is disabled by repository policy.")
+
     broker_class = _load_broker_class(broker_name)
     credentials = credentials or {}
 

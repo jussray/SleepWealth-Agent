@@ -13,11 +13,14 @@ from portfolio.tracker import PortfolioTracker
 from risk.gates import RiskGates
 from rules import load_rules
 
-app = typer.Typer(help="Governed trading agent. Paper first, live only through the gate.")
+app = typer.Typer(help="Governed paper-trading simulator. Live execution is disabled.")
 
 
 async def _run(mode, broker, symbol, qty, side, auto_approve):
-    paper_only = mode == "paper"
+    if mode != "paper":
+        typer.echo("[BLOCKED] SleepWealth is paper/simulation-only; live execution is disabled.")
+        raise typer.Exit(1)
+    paper_only = True
 
     rules = load_rules()
     ok, errors = RulesValidator().validate(rules)
@@ -81,7 +84,7 @@ async def _run(mode, broker, symbol, qty, side, auto_approve):
 
 @app.command()
 def run(
-    mode: str = typer.Option("paper", help="paper | live"),
+    mode: str = typer.Option("paper", help="paper only; live execution is disabled"),
     broker: str = typer.Option("mock", help="mock | alpaca"),
     symbol: str = typer.Option("AAPL"),
     qty: float = typer.Option(1),
@@ -89,8 +92,8 @@ def run(
     auto_approve: bool = typer.Option(False, "--auto-approve", help="skip human approval (paper only)"),
 ):
     """Run one full OODA cycle: observe -> evaluate -> propose -> approve -> execute -> audit."""
-    if mode == "live" and auto_approve:
-        typer.echo("[ERROR] --auto-approve is forbidden in live mode")
+    if mode != "paper":
+        typer.echo("[BLOCKED] SleepWealth is paper/simulation-only; live execution is disabled.")
         raise typer.Exit(1)
     asyncio.run(_run(mode, broker, symbol, qty, side, auto_approve))
 

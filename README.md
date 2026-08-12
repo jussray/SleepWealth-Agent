@@ -2,8 +2,7 @@
 
 A governed trading agent. The machine proposes; the human owns the ceiling.
 
-Paper trading only by default. Live execution is possible but gated behind explicit
-configuration, a risk preflight, and a manual approval step.
+Paper/simulation only. Live execution is disabled at both the CLI and broker-factory layers.
 
 ## Why this exists
 
@@ -64,7 +63,7 @@ These are not suggestions. Tests enforce them.
 | Adapter | Paper | Live | Notes |
 |---|---|---|---|
 | `mock` | yes | never | in-memory, no network, used by CI |
-| `alpaca` | yes | yes | needs `ALPACA_API_KEY` + `ALPACA_API_SECRET` |
+| `alpaca` | yes | disabled | paper-mode adapter only in this repository |
 
 Adding a broker: implement the 8 methods on `BaseBroker`, register it in
 `broker/factory.py`. The CLI picks it up with no other changes.
@@ -76,26 +75,14 @@ python -m cli.main validate
 python -m cli.main status --broker mock
 python -m cli.main run --mode paper --broker mock --symbol AAPL --qty 1 --side buy --auto-approve
 
-# Alpaca paper
-export ALPACA_API_KEY=...
-export ALPACA_API_SECRET=...
-python -m cli.main run --mode paper --broker alpaca --symbol AAPL --qty 1 --side buy
+# External broker adapters are not required for the mock paper simulator.
 ```
 
-`--auto-approve` is refused in live mode.
+`--auto-approve` exists only for the local paper/demo path. Live mode is refused entirely.
 
-## Pre-live sweep
+## Live execution policy
 
-Do not run live until every one of these is true:
-
-- [ ] Paper has run clean for a meaningful number of cycles
-- [ ] Broker credentials verified against the real account
-- [ ] Position sizing is small and capped by `max_position_size`
-- [ ] Kill switch has been tested, not just written
-- [ ] Logs and alerts are actually being read by a human
-- [ ] You can follow the rules on a bad day without improvising
-
-The last one is the one people skip.
+Live execution is intentionally disabled. The pre-live gate remains as a design and testing artifact only; it cannot unlock real-money execution.
 
 ## Honest limits
 

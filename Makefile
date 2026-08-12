@@ -37,10 +37,8 @@ run-paper-blocked:
 	-python -m cli.main run --mode paper --broker mock --symbol AAPL --qty 1 --side buy --auto-approve
 
 run-live:
-	@echo "LIVE MODE. Pre-live sweep must pass first. See README."
-	@read -p "Type 'yes' to continue: " c && [ "$$c" = "yes" ] && \
-		python -m cli.main run --mode live --broker alpaca --symbol AAPL --qty 1 --side buy
-
+	@echo "LIVE MODE DISABLED. SleepWealth is paper/simulation-only."
+	@false
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
