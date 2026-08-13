@@ -24,12 +24,18 @@ jobs:
       - name: Validate rules
         run: python -m cli.main validate
 
-      - name: Lint
+      - name: Critical lint
         run: ruff check .
-        continue-on-error: true
 
       - name: Test
         run: pytest tests/ -v --tb=short
 
-      - name: Paper smoke test
+      - name: Simulation smoke test
         run: python -m cli.main run --mode paper --broker mock --symbol AAPL --qty 0.04 --side buy --auto-approve
+
+      - name: Live mode must fail closed
+        run: |
+          if python -m cli.main run --mode live --broker mock --symbol AAPL --qty 0.04 --side buy --auto-approve; then
+            echo "live mode unexpectedly succeeded"
+            exit 1
+          fi
