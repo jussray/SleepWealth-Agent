@@ -4,6 +4,10 @@ Turns the go-live checklist into code. Returns (passed, failures). Fail-closed:
 any exception is a failure, an unknown state is a failure, an empty audit log is
 a failure.
 
+IMPORTANT: a passing result means only that these advisory/pre-live control
+checks are satisfied. Repository policy still disables live broker execution.
+This gate never grants execution authority.
+
 The conditions are drawn from documented control failures rather than invented:
 
   * Knight Capital, 1 Aug 2012 — undocumented deployment, dead code left on one
@@ -71,6 +75,8 @@ class GateResult:
         return {
             "event": "live_gate_evaluated",
             "passed": self.passed,
+            "execution_authorized": False,
+            "authority_ceiling": "advisory",
             "failures": [c.name for c in self.failures],
             "checks": [c.to_dict() for c in self.checks],
             "evaluated_at": self.evaluated_at,
@@ -85,14 +91,16 @@ class GateResult:
                 lines.append(f"         → {c.reason}")
         lines.append("=" * 56)
         lines.append(
-            "GATE OPEN — live trading permitted" if self.passed
-            else f"GATE CLOSED — {len(self.failures)} condition(s) unmet. Stay on paper."
+            "PRE-LIVE CONTROLS SATISFIED — execution is still disabled by repository policy."
+            if self.passed
+            else f"PRE-LIVE CONTROLS INCOMPLETE — {len(self.failures)} condition(s) unmet. Continue mock/paper only."
         )
+        lines.append("Authority: advisory only; execution_authorized=false")
         return "\n".join(lines)
 
 
 class LiveGate:
-    """Evaluates the 12 conditions. Nothing here places an order."""
+    """Evaluates the 12 conditions. Nothing here places or authorizes an order."""
 
     def __init__(
         self,
