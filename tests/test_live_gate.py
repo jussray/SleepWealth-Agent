@@ -1,7 +1,8 @@
 """The gate must fail closed and never mint execution authority."""
 import json
 
-from gate.live_gate import GateCheck, GateResult, LiveGate
+from audit.logger import AuditLogger
+from gate.live_gate import GateCheck, GateResult, LiveGate, run_kill_switch_drill
 
 
 def test_gate_closed_on_empty_audit(tmp_path):
@@ -38,13 +39,66 @@ def test_gate_blocks_auto_increasing_ceiling(tmp_path):
     assert inv.passed is False
 
 
-def test_kill_switch_check_requires_a_real_drill(tmp_path):
+def test_legacy_kill_switch_pass_event_is_not_enough(tmp_path):
     log = tmp_path / "a.log"
-    log.write_text(json.dumps({"event": "kill_switch_drill", "result": "failed"}) + "\n")
+    log.write_text(json.dumps({"event": "kill_switch_drill", "result": "passed"}) + "\n")
     gate = LiveGate(audit_path=str(log))
     result = gate.evaluate(rules={}, config={})
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert ks.passed is False
+    assert "terminal cancellation proof" in ks.reason
+
+
+async def test_kill_switch_drill_requires_working_paper_order_and_terminal_cancel(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+
+    class PaperBroker:
+        def is_paper_only(self):
+            return True
+
+    states = iter(["Submitted", "Submitted", "Cancelled"])
+
+    async def status(_order_id):
+        return {"status": next(states)}
+
+    async def cancel_all():
+        return True
+
+    record = await run_kill_switch_drill(
+        PaperBroker(),
+        audit,
+        working_order_id="paper-42",
+        cancel_fn=cancel_all,
+        status_fn=status,
+        status_attempts=3,
+        status_interval=0,
+    )
+
+    assert record["result"] == "passed"
+    assert record["paper_proven"] is True
+    assert record["pre_cancel_status"] == "Submitted"
+    assert record["terminal_status"] == "Cancelled"
+
+    gate = LiveGate(audit_path=str(path))
+    result = gate.evaluate(rules={}, config={})
+    integrity = next(c for c in result.checks if c.name == "audit_integrity")
+    ks = next(c for c in result.checks if c.name == "kill_switch_tested")
+    assert integrity.passed is True
+    assert ks.passed is True
+
+
+async def test_kill_switch_drill_cannot_pass_without_order_id(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+
+    class PaperBroker:
+        def is_paper_only(self):
+            return True
+
+    record = await run_kill_switch_drill(PaperBroker(), audit)
+    assert record["result"] == "failed"
+    assert "order id is required" in record["detail"]
 
 
 def test_passing_pre_live_controls_never_claim_live_execution_authority():
