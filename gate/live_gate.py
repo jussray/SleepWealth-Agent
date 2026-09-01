@@ -7,13 +7,9 @@ IMPORTANT: a passing result means only that these advisory/pre-live control
 checks are satisfied. Repository policy still disables live broker execution.
 This gate never grants execution authority.
 
-The twelve readiness conditions are drawn from documented control failures
-rather than invented. Audit integrity is a separate prerequisite because all
-soak, error, drawdown, alert, and kill-switch claims depend on trustworthy log
-replay.
-
-None of the cited regulatory frameworks bind a solo retail operator trading
-their own account. They are used here only as sources for which controls matter.
+Audit-derived evidence is accepted only from one immutable, hash-chained
+snapshot whose terminal entry hash matches an externally supplied anchor.
+Unchained legacy-prefix events are never eligible gate evidence.
 """
 
 import asyncio
@@ -22,7 +18,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import List, Optional
 
 from audit.logger import AuditLogger
 
@@ -94,7 +90,7 @@ class GateResult:
 
 
 class LiveGate:
-    """Evaluates audit integrity plus the twelve readiness conditions."""
+    """Evaluates an anchored audit snapshot plus the twelve readiness conditions."""
 
     def __init__(
         self,
@@ -110,21 +106,6 @@ class LiveGate:
         self.kill_switch_max_age_days = kill_switch_max_age_days
         self.max_drawdown_pct = max_drawdown_pct
 
-    def _events(self) -> List[dict]:
-        if not self.audit_path.exists():
-            return []
-        events = []
-        with open(self.audit_path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        return events
-
     @staticmethod
     def _ts(event: dict) -> Optional[datetime]:
         raw = event.get("logged_at") or event.get("timestamp")
@@ -137,7 +118,7 @@ class LiveGate:
             return None
 
     def chain_hash(self) -> str:
-        """Whole-file checksum for external anchoring; not the entry chain itself."""
+        """Whole-file checksum for diagnostics; not an audit trust anchor."""
         if not self.audit_path.exists():
             return ""
         h = hashlib.sha256()
@@ -152,17 +133,25 @@ class LiveGate:
         rules: Optional[dict] = None,
         config: Optional[dict] = None,
     ) -> GateResult:
-        events = self._events()
         rules = rules or {}
         config = config or {}
         checks: List[GateCheck] = []
+        events: List[dict] = []
 
         def add(name, passed, reason, priority, blocking=True):
             checks.append(GateCheck(name, bool(passed), reason, priority, blocking))
 
-        # Prerequisite: audit-derived claims are worthless if replay integrity fails.
+        # Read exactly one snapshot. All audit-derived checks below consume only
+        # events returned from this verified snapshot, never a second file read.
         try:
-            integrity_ok, integrity_reason = AuditLogger.verify_chain_file(self.audit_path)
+            integrity_ok, integrity_reason, verified_events, _observed_head = (
+                AuditLogger.verify_snapshot_file(
+                    self.audit_path,
+                    config.get("audit_head_hash"),
+                )
+            )
+            if integrity_ok:
+                events = verified_events
             add("audit_integrity", integrity_ok, integrity_reason, 0)
         except Exception as exc:
             add("audit_integrity", False, f"integrity check raised: {exc}", 0)
@@ -192,14 +181,17 @@ class LiveGate:
         drills = [
             e for e in events
             if e.get("event") == "kill_switch_drill"
+            and e.get("receipt_version") == 2
             and e.get("result") == "passed"
             and e.get("paper_proven") is True
             and bool(e.get("working_order_id"))
+            and e.get("broker_cancel_path") == "cancel_all"
+            and e.get("broker_status_path") == "get_order_status"
             and e.get("terminal_status") in CANCELLED_STATES
         ]
         if not drills:
             add("kill_switch_tested", False,
-                "no passing paper kill-switch drill with terminal cancellation proof", 2)
+                "no anchored broker-bound paper kill-switch drill with terminal cancellation proof", 2)
         else:
             last = max((self._ts(e) for e in drills if self._ts(e)), default=None)
             if last is None:
@@ -233,7 +225,7 @@ class LiveGate:
         cycles = [e for e in events if e.get("event") in ("race_finished", "cycle_completed")]
         stamps = [self._ts(e) for e in events if self._ts(e)]
         if not stamps:
-            add("soak_completed", False, "audit log is empty", 5)
+            add("soak_completed", False, "no anchored soak evidence", 5)
         else:
             span_days = (max(stamps) - min(stamps)).days
             enough_time = span_days >= self.min_soak_days
@@ -247,14 +239,14 @@ class LiveGate:
         resolved = {e.get("resolves") for e in events if e.get("event") == "error_resolved"}
         unresolved = [e for e in errors if e.get("id") not in resolved]
         add("no_unresolved_errors", not unresolved,
-            f"{len(unresolved)} unresolved error event(s)", 6)
+            f"{len(unresolved)} unresolved anchored error event(s)", 6)
 
         # 7. Drawdown within bounds
         dds = [float(e["max_drawdown_pct"]) for e in events
                if isinstance(e.get("max_drawdown_pct"), (int, float))]
         worst = max(dds) if dds else None
         if worst is None:
-            add("drawdown_within_bounds", False, "no drawdown observations recorded", 7)
+            add("drawdown_within_bounds", False, "no anchored drawdown observations recorded", 7)
         else:
             add("drawdown_within_bounds", worst <= self.max_drawdown_pct,
                 f"worst observed {worst:.1f}% vs max {self.max_drawdown_pct:.1f}%", 7)
@@ -266,7 +258,7 @@ class LiveGate:
         # 9. Alerting proven to actually arrive
         alerts = [e for e in events if e.get("event") == "alert_received"]
         add("alerting_confirmed", bool(alerts),
-            "no alert_received event; synthetic alert receipt required", 9)
+            "no anchored alert_received event; synthetic alert receipt required", 9)
 
         # 10. Deployment integrity
         commit = config.get("git_commit")
@@ -296,7 +288,7 @@ class LiveGate:
                 and 0 < float(e["filled"]) < 1
             ]
             add("fractional_verified", bool(frac),
-                "no successful fractional paper fill recorded", 12)
+                "no anchored successful fractional paper fill recorded", 12)
 
         passed = all(c.passed for c in checks if c.blocking)
         return GateResult(passed=passed, checks=checks)
@@ -306,26 +298,26 @@ async def run_kill_switch_drill(
     broker,
     audit,
     working_order_id: Optional[str] = None,
-    cancel_fn: Optional[Callable] = None,
-    status_fn: Optional[Callable] = None,
     status_attempts: int = 10,
     status_interval: float = 0.2,
 ) -> dict:
-    """Exercise the real cancel path against a known working paper order.
+    """Exercise broker-bound cancel/status methods on a working paper order.
 
-    The caller must create a paper-only working order first and pass its id.
-    This routine verifies the order is working before cancellation, invokes the
-    global kill path, then waits for broker-reported terminal cancellation. Only
-    that sequence may mint a passing `kill_switch_drill` receipt.
+    Test callbacks are intentionally not accepted by this trusted receipt API.
+    The supplied broker itself must prove paper-only mode and expose the actual
+    `cancel_all` and `get_order_status` methods used to mint the receipt.
     """
     record = {
         "event": "kill_switch_drill",
+        "receipt_version": 2,
         "result": "failed",
         "detail": "",
         "paper_proven": False,
         "working_order_id": working_order_id,
         "pre_cancel_status": None,
         "terminal_status": None,
+        "broker_cancel_path": "cancel_all",
+        "broker_status_path": "get_order_status",
     }
     try:
         paper_proven = bool(getattr(broker, "is_paper_only", lambda: False)())
@@ -335,10 +327,10 @@ async def run_kill_switch_drill(
         elif not working_order_id:
             record["detail"] = "working paper order id is required"
         else:
-            cancel = cancel_fn or getattr(broker, "cancel_all", None)
-            status_reader = status_fn or getattr(broker, "get_order_status", None)
-            if cancel is None or status_reader is None:
-                record["detail"] = "broker lacks cancel_all/get_order_status proof path"
+            cancel = getattr(broker, "cancel_all", None)
+            status_reader = getattr(broker, "get_order_status", None)
+            if not callable(cancel) or not callable(status_reader):
+                record["detail"] = "broker lacks bound cancel_all/get_order_status proof path"
             else:
                 before = await status_reader(working_order_id)
                 before_status = before.get("status") if isinstance(before, dict) else str(before)
@@ -356,7 +348,7 @@ async def run_kill_switch_drill(
                             record["terminal_status"] = state
                             if state in CANCELLED_STATES:
                                 record["result"] = "passed"
-                                record["detail"] = "working paper order cancelled by global kill path"
+                                record["detail"] = "working paper order cancelled by broker-bound global kill path"
                                 break
                             if state == "Filled":
                                 record["detail"] = "probe filled before cancellation could be proven"
