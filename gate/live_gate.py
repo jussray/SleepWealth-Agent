@@ -187,11 +187,12 @@ class LiveGate:
             and bool(e.get("working_order_id"))
             and e.get("broker_cancel_path") == "cancel_all"
             and e.get("broker_status_path") == "get_order_status"
+            and e.get("pre_cancel_status") in WORKING_STATES
             and e.get("terminal_status") in CANCELLED_STATES
         ]
         if not drills:
             add("kill_switch_tested", False,
-                "no anchored broker-bound paper kill-switch drill with terminal cancellation proof", 2)
+                "no anchored broker-bound paper kill-switch drill with recorded working-state and terminal cancellation proof", 2)
         else:
             last = max((self._ts(e) for e in drills if self._ts(e)), default=None)
             if last is None:
