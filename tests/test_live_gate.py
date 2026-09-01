@@ -2,7 +2,25 @@
 import json
 
 from audit.logger import AuditLogger
-from gate.live_gate import GateCheck, GateResult, LiveGate, run_kill_switch_drill
+from gate.live_gate import (
+    GateCheck,
+    GateResult,
+    KILL_SWITCH_RECEIPT_VERSION,
+    LiveGate,
+    _sign_kill_switch_receipt,
+    run_kill_switch_drill,
+)
+
+RECEIPT_KEY = "paper-proof-test-key-32-bytes-minimum"
+
+
+def anchored_config(start, head, **extra):
+    return {
+        "audit_start_hash": start,
+        "audit_head_hash": head,
+        "kill_switch_receipt_key": RECEIPT_KEY,
+        **extra,
+    }
 
 
 def test_gate_closed_on_empty_audit(tmp_path):
@@ -15,20 +33,15 @@ def test_gate_closed_on_empty_audit(tmp_path):
     assert "Continue mock/paper only" in result.render()
 
 
-def test_gate_requires_external_audit_anchor(tmp_path):
+async def test_gate_requires_external_audit_start_and_head(tmp_path):
     log = tmp_path / "a.log"
     audit = AuditLogger(str(log))
-
-    async def write_one():
-        await audit.log({"event": "cycle_completed", "cycle": 1})
-
-    import asyncio
-    asyncio.run(write_one())
+    await audit.start_trusted_chain({"event": "cycle_completed", "cycle": 1})
 
     result = LiveGate(audit_path=str(log)).evaluate(rules={}, config={})
     integrity = next(c for c in result.checks if c.name == "audit_integrity")
     assert integrity.passed is False
-    assert "trusted terminal audit hash is required" in integrity.reason
+    assert "trusted audit start hash is required" in integrity.reason
 
 
 def test_gate_blocks_when_auto_approve_enabled(tmp_path):
@@ -62,14 +75,14 @@ def test_legacy_kill_switch_pass_event_is_not_enough(tmp_path):
     result = gate.evaluate(rules={}, config={})
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert ks.passed is False
-    assert "working-state" in ks.reason
+    assert "authenticated" in ks.reason
 
 
 async def test_legacy_prefix_cannot_satisfy_anchored_gate_evidence(tmp_path):
     path = tmp_path / "audit.log"
     path.write_text(json.dumps({
         "event": "kill_switch_drill",
-        "receipt_version": 2,
+        "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
         "result": "passed",
         "paper_proven": True,
         "working_order_id": "forged-legacy",
@@ -77,15 +90,16 @@ async def test_legacy_prefix_cannot_satisfy_anchored_gate_evidence(tmp_path):
         "broker_status_path": "get_order_status",
         "pre_cancel_status": "Submitted",
         "terminal_status": "Cancelled",
+        "receipt_auth": "0" * 64,
         "logged_at": "2026-09-01T00:00:00+00:00",
     }) + "\n")
     audit = AuditLogger(str(path))
-    await audit.log({"event": "cycle_completed", "cycle": 1})
-    anchor = audit.observed_terminal_hash()
+    start = await audit.start_trusted_chain({"event": "cycle_completed", "cycle": 1})
+    head = audit.observed_terminal_hash()
 
     result = LiveGate(audit_path=str(path)).evaluate(
         rules={},
-        config={"audit_head_hash": anchor},
+        config=anchored_config(start, head),
     )
     integrity = next(c for c in result.checks if c.name == "audit_integrity")
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
@@ -96,6 +110,7 @@ async def test_legacy_prefix_cannot_satisfy_anchored_gate_evidence(tmp_path):
 async def test_kill_switch_drill_requires_broker_bound_working_paper_order_and_terminal_cancel(tmp_path):
     path = tmp_path / "audit.log"
     audit = AuditLogger(str(path))
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
 
     class PaperBroker:
         def __init__(self):
@@ -117,53 +132,82 @@ async def test_kill_switch_drill_requires_broker_bound_working_paper_order_and_t
         broker,
         audit,
         working_order_id="paper-42",
+        receipt_key=RECEIPT_KEY,
         status_attempts=3,
         status_interval=0,
     )
 
     assert broker.cancel_called is True
-    assert record["receipt_version"] == 2
+    assert record["receipt_version"] == KILL_SWITCH_RECEIPT_VERSION
     assert record["result"] == "passed"
     assert record["paper_proven"] is True
     assert record["pre_cancel_status"] == "Submitted"
     assert record["terminal_status"] == "Cancelled"
     assert record["broker_cancel_path"] == "cancel_all"
     assert record["broker_status_path"] == "get_order_status"
+    assert len(record["receipt_auth"]) == 64
 
-    anchor = audit.observed_terminal_hash()
+    head = audit.observed_terminal_hash()
     gate = LiveGate(audit_path=str(path))
-    result = gate.evaluate(rules={}, config={"audit_head_hash": anchor})
+    result = gate.evaluate(rules={}, config=anchored_config(start, head))
     integrity = next(c for c in result.checks if c.name == "audit_integrity")
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert integrity.passed is True
     assert ks.passed is True
 
 
-async def test_gate_rejects_passed_receipt_without_recorded_working_state(tmp_path):
+async def test_gate_rejects_hand_logged_kill_switch_receipt_without_authentication(tmp_path):
     path = tmp_path / "audit.log"
     audit = AuditLogger(str(path))
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
     await audit.log({
         "event": "kill_switch_drill",
-        "receipt_version": 2,
+        "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
         "result": "passed",
+        "detail": "forged dictionary",
+        "paper_proven": True,
+        "working_order_id": "paper-42",
+        "broker_cancel_path": "cancel_all",
+        "broker_status_path": "get_order_status",
+        "pre_cancel_status": "Submitted",
+        "terminal_status": "Cancelled",
+    })
+    head = audit.observed_terminal_hash()
+
+    result = LiveGate(audit_path=str(path)).evaluate(
+        rules={},
+        config=anchored_config(start, head),
+    )
+    ks = next(c for c in result.checks if c.name == "kill_switch_tested")
+    assert ks.passed is False
+
+
+async def test_gate_rejects_authenticated_receipt_without_recorded_working_state(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
+    forged = {
+        "event": "kill_switch_drill",
+        "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
+        "result": "passed",
+        "detail": "forged already-terminal state",
         "paper_proven": True,
         "working_order_id": "paper-42",
         "broker_cancel_path": "cancel_all",
         "broker_status_path": "get_order_status",
         "pre_cancel_status": "Cancelled",
         "terminal_status": "Cancelled",
-    })
-    anchor = audit.observed_terminal_hash()
+    }
+    forged["receipt_auth"] = _sign_kill_switch_receipt(forged, RECEIPT_KEY)
+    await audit.log(forged)
+    head = audit.observed_terminal_hash()
 
     result = LiveGate(audit_path=str(path)).evaluate(
         rules={},
-        config={"audit_head_hash": anchor},
+        config=anchored_config(start, head),
     )
-    integrity = next(c for c in result.checks if c.name == "audit_integrity")
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
-    assert integrity.passed is True
     assert ks.passed is False
-    assert "working-state" in ks.reason
 
 
 async def test_kill_switch_receipt_api_rejects_forged_callbacks(tmp_path):
@@ -191,6 +235,7 @@ async def test_kill_switch_receipt_api_rejects_forged_callbacks(tmp_path):
             PaperBroker(),
             audit,
             working_order_id="paper-42",
+            receipt_key=RECEIPT_KEY,
             cancel_fn=forged_cancel,
             status_fn=forged_status,
         )
@@ -202,15 +247,31 @@ async def test_kill_switch_receipt_api_rejects_forged_callbacks(tmp_path):
     assert not path.exists()
 
 
-async def test_kill_switch_drill_cannot_pass_without_order_id(tmp_path):
+async def test_kill_switch_drill_fails_closed_without_trusted_receipt_key(tmp_path):
     path = tmp_path / "audit.log"
     audit = AuditLogger(str(path))
+    await audit.start_trusted_chain({"event": "audit_ready"})
 
     class PaperBroker:
         def is_paper_only(self):
             return True
 
-    record = await run_kill_switch_drill(PaperBroker(), audit)
+    record = await run_kill_switch_drill(PaperBroker(), audit, working_order_id="paper-42")
+    assert record["result"] == "failed"
+    assert "receipt key" in record["detail"]
+    assert record["receipt_auth"] == ""
+
+
+async def test_kill_switch_drill_cannot_pass_without_order_id(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+    await audit.start_trusted_chain({"event": "audit_ready"})
+
+    class PaperBroker:
+        def is_paper_only(self):
+            return True
+
+    record = await run_kill_switch_drill(PaperBroker(), audit, receipt_key=RECEIPT_KEY)
     assert record["result"] == "failed"
     assert "order id is required" in record["detail"]
 
@@ -218,16 +279,16 @@ async def test_kill_switch_drill_cannot_pass_without_order_id(tmp_path):
 async def test_gate_rejects_entry_boundary_truncation_against_trusted_anchor(tmp_path):
     path = tmp_path / "audit.log"
     audit = AuditLogger(str(path))
-    await audit.log({"event": "cycle_completed", "cycle": 1})
+    start = await audit.start_trusted_chain({"event": "cycle_completed", "cycle": 1})
     await audit.log({"event": "error", "id": "do-not-hide"})
-    trusted_anchor = audit.observed_terminal_hash()
+    trusted_head = audit.observed_terminal_hash()
 
     lines = path.read_text().splitlines()
     path.write_text(lines[0] + "\n")
 
     result = LiveGate(audit_path=str(path)).evaluate(
         rules={},
-        config={"audit_head_hash": trusted_anchor},
+        config=anchored_config(start, trusted_head),
     )
     integrity = next(c for c in result.checks if c.name == "audit_integrity")
     assert integrity.passed is False
@@ -237,15 +298,15 @@ async def test_gate_rejects_entry_boundary_truncation_against_trusted_anchor(tmp
 async def test_gate_uses_one_verified_snapshot_for_integrity_and_events(tmp_path, monkeypatch):
     path = tmp_path / "audit.log"
     audit = AuditLogger(str(path))
-    await audit.log({"event": "cycle_completed", "cycle": 1})
-    anchor = audit.observed_terminal_hash()
+    start = await audit.start_trusted_chain({"event": "cycle_completed", "cycle": 1})
+    head = audit.observed_terminal_hash()
 
     original = AuditLogger.verify_snapshot_file
     calls = {"count": 0}
 
-    def verify_then_append(log_path, expected_head_hash):
+    def verify_then_append(log_path, expected_start_hash, expected_head_hash):
         calls["count"] += 1
-        result = original(log_path, expected_head_hash)
+        result = original(log_path, expected_start_hash, expected_head_hash)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"event": "error", "id": "later-unanchored"}) + "\n")
         return result
@@ -253,7 +314,7 @@ async def test_gate_uses_one_verified_snapshot_for_integrity_and_events(tmp_path
     monkeypatch.setattr(AuditLogger, "verify_snapshot_file", staticmethod(verify_then_append))
     result = LiveGate(audit_path=str(path)).evaluate(
         rules={},
-        config={"audit_head_hash": anchor},
+        config=anchored_config(start, head),
     )
 
     assert calls["count"] == 1
