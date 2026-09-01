@@ -62,7 +62,7 @@ def test_legacy_kill_switch_pass_event_is_not_enough(tmp_path):
     result = gate.evaluate(rules={}, config={})
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert ks.passed is False
-    assert "broker-bound" in ks.reason
+    assert "working-state" in ks.reason
 
 
 async def test_legacy_prefix_cannot_satisfy_anchored_gate_evidence(tmp_path):
@@ -75,6 +75,7 @@ async def test_legacy_prefix_cannot_satisfy_anchored_gate_evidence(tmp_path):
         "working_order_id": "forged-legacy",
         "broker_cancel_path": "cancel_all",
         "broker_status_path": "get_order_status",
+        "pre_cancel_status": "Submitted",
         "terminal_status": "Cancelled",
         "logged_at": "2026-09-01T00:00:00+00:00",
     }) + "\n")
@@ -136,6 +137,33 @@ async def test_kill_switch_drill_requires_broker_bound_working_paper_order_and_t
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert integrity.passed is True
     assert ks.passed is True
+
+
+async def test_gate_rejects_passed_receipt_without_recorded_working_state(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+    await audit.log({
+        "event": "kill_switch_drill",
+        "receipt_version": 2,
+        "result": "passed",
+        "paper_proven": True,
+        "working_order_id": "paper-42",
+        "broker_cancel_path": "cancel_all",
+        "broker_status_path": "get_order_status",
+        "pre_cancel_status": "Cancelled",
+        "terminal_status": "Cancelled",
+    })
+    anchor = audit.observed_terminal_hash()
+
+    result = LiveGate(audit_path=str(path)).evaluate(
+        rules={},
+        config={"audit_head_hash": anchor},
+    )
+    integrity = next(c for c in result.checks if c.name == "audit_integrity")
+    ks = next(c for c in result.checks if c.name == "kill_switch_tested")
+    assert integrity.passed is True
+    assert ks.passed is False
+    assert "working-state" in ks.reason
 
 
 async def test_kill_switch_receipt_api_rejects_forged_callbacks(tmp_path):
