@@ -30,7 +30,7 @@ DEFAULT_MAX_DRAWDOWN_PCT = 10.0
 
 CANCELLED_STATES = {"Cancelled", "ApiCancelled"}
 WORKING_STATES = {"PendingSubmit", "PreSubmitted", "Submitted", "ApiPending"}
-KILL_SWITCH_RECEIPT_VERSION = 3
+KILL_SWITCH_RECEIPT_VERSION = 4
 MIN_RECEIPT_KEY_BYTES = 32
 
 
@@ -42,6 +42,35 @@ def _receipt_key(value) -> bytes:
     else:
         return b""
     return key if len(key) >= MIN_RECEIPT_KEY_BYTES else b""
+
+
+def _broker_receipt_binding(broker, expected_account: Optional[str] = None):
+    """Fingerprint the broker proof and select exactly one target account."""
+    if broker is None:
+        return "", None, [], {}
+    proof = getattr(broker, "paper_proof", lambda: {})()
+    if not isinstance(proof, dict):
+        return "", None, [], {}
+
+    raw_accounts = proof.get("managed_accounts", [])
+    if not isinstance(raw_accounts, (list, tuple)):
+        return "", None, [], proof
+    accounts = sorted({str(account) for account in raw_accounts if str(account)})
+    target = str(expected_account) if expected_account else (accounts[0] if len(accounts) == 1 else None)
+    if target not in accounts:
+        target = None
+
+    binding_payload = {
+        "broker_class": f"{broker.__class__.__module__}.{broker.__class__.__qualname__}",
+        "port": proof.get("port"),
+        "managed_accounts": accounts,
+        "configured_paper": proof.get("configured_paper"),
+        "provably_paper": proof.get("provably_paper"),
+    }
+    binding = hashlib.sha256(
+        json.dumps(binding_payload, default=str, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return binding, target, accounts, proof
 
 
 def _kill_switch_payload(record: dict) -> bytes:
@@ -56,6 +85,9 @@ def _kill_switch_payload(record: dict) -> bytes:
         "terminal_status": record.get("terminal_status"),
         "broker_cancel_path": record.get("broker_cancel_path"),
         "broker_status_path": record.get("broker_status_path"),
+        "occurred_at": record.get("occurred_at"),
+        "target_account": record.get("target_account"),
+        "broker_proof_hash": record.get("broker_proof_hash"),
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -70,12 +102,26 @@ def _sign_kill_switch_receipt(record: dict, receipt_key) -> str:
 def _valid_kill_switch_receipt(record: dict, receipt_key) -> bool:
     provided = record.get("receipt_auth")
     expected = _sign_kill_switch_receipt(record, receipt_key)
-    return (
+    if not (
         isinstance(provided, str)
         and len(provided) == 64
+        and provided.isascii()
+        and all(char in "0123456789abcdefABCDEF" for char in provided)
         and bool(expected)
-        and hmac.compare_digest(provided.lower(), expected.lower())
-    )
+    ):
+        return False
+    return hmac.compare_digest(provided.lower(), expected.lower())
+
+
+def _receipt_occurrence(record: dict) -> Optional[datetime]:
+    raw = record.get("occurred_at")
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -202,23 +248,30 @@ class LiveGate:
         except Exception as exc:
             add("audit_integrity", False, f"integrity check raised: {exc}", 0)
 
+        broker_binding = ""
+        target_account = None
+        managed_accounts: list[str] = []
         try:
             if broker is None:
                 add("target_account_proven", False,
                     "no broker supplied; cannot verify which account this would hit", 1)
             else:
-                proof = getattr(broker, "paper_proof", lambda: {})()
+                broker_binding, target_account, managed_accounts, _proof = _broker_receipt_binding(
+                    broker, config.get("expected_account")
+                )
                 expected = config.get("expected_account")
-                accounts = proof.get("managed_accounts", [])
-                if not accounts:
+                if not managed_accounts:
                     add("target_account_proven", False,
                         "broker returned no managed accounts", 1)
-                elif expected and expected not in accounts:
+                elif expected and expected not in managed_accounts:
                     add("target_account_proven", False,
-                        f"expected account {expected} not in {accounts}", 1)
+                        f"expected account {expected} not in {managed_accounts}", 1)
+                elif target_account is None:
+                    add("target_account_proven", False,
+                        "multiple managed accounts require an explicit expected_account", 1)
                 else:
                     add("target_account_proven", True,
-                        f"resolved to {accounts}", 1)
+                        f"resolved to {target_account} within {managed_accounts}", 1)
         except Exception as exc:
             add("target_account_proven", False, f"check raised: {exc}", 1)
 
@@ -234,19 +287,30 @@ class LiveGate:
             and e.get("broker_status_path") == "get_order_status"
             and e.get("pre_cancel_status") in WORKING_STATES
             and e.get("terminal_status") in CANCELLED_STATES
+            and bool(broker_binding)
+            and e.get("broker_proof_hash") == broker_binding
+            and bool(target_account)
+            and e.get("target_account") == target_account
+            and _receipt_occurrence(e) is not None
             and _valid_kill_switch_receipt(e, receipt_key)
         ]
         if not drills:
             add("kill_switch_tested", False,
-                "no authenticated anchored broker-bound paper kill-switch drill with working-state and terminal cancellation proof", 2)
+                "no authenticated anchored broker/account-bound paper kill-switch drill with signed occurrence time, working-state, and terminal cancellation proof", 2)
         else:
-            last = max((self._ts(e) for e in drills if self._ts(e)), default=None)
+            last = max((_receipt_occurrence(e) for e in drills if _receipt_occurrence(e)), default=None)
             if last is None:
-                add("kill_switch_tested", False, "drill has no readable timestamp", 2)
+                add("kill_switch_tested", False, "drill has no authenticated occurrence timestamp", 2)
             else:
-                age = (datetime.now(timezone.utc) - last).days
-                add("kill_switch_tested", age <= self.kill_switch_max_age_days,
-                    f"last verified drill {age}d ago (max {self.kill_switch_max_age_days}d)", 2)
+                now = datetime.now(timezone.utc)
+                age_seconds = (now - last).total_seconds()
+                max_age_seconds = self.kill_switch_max_age_days * 86400
+                if age_seconds < 0:
+                    add("kill_switch_tested", False, "drill occurrence timestamp is in the future", 2)
+                else:
+                    age_days = int(age_seconds // 86400)
+                    add("kill_switch_tested", age_seconds <= max_age_seconds,
+                        f"last verified drill {age_days}d ago (max {self.kill_switch_max_age_days}d)", 2)
 
         ceiling = rules.get("ceiling") or {}
         caps_configured = bool(rules.get("max_position_size")) and bool(ceiling.get("current"))
@@ -336,6 +400,7 @@ async def run_kill_switch_drill(
     audit,
     working_order_id: Optional[str] = None,
     receipt_key=None,
+    expected_account: Optional[str] = None,
     status_attempts: int = 10,
     status_interval: float = 0.2,
 ) -> dict:
@@ -344,6 +409,9 @@ async def run_kill_switch_drill(
     The receipt HMAC key must come from a separately trusted control plane. Test
     callbacks are intentionally not accepted by this API.
     """
+    broker_binding, target_account, managed_accounts, broker_proof = _broker_receipt_binding(
+        broker, expected_account
+    )
     record = {
         "event": "kill_switch_drill",
         "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
@@ -355,13 +423,20 @@ async def run_kill_switch_drill(
         "terminal_status": None,
         "broker_cancel_path": "cancel_all",
         "broker_status_path": "get_order_status",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "target_account": target_account,
+        "broker_proof_hash": broker_binding,
     }
     try:
         key = _receipt_key(receipt_key)
         if not key:
             record["detail"] = f"trusted kill-switch receipt key must be at least {MIN_RECEIPT_KEY_BYTES} bytes"
+        elif not broker_binding or not managed_accounts or target_account is None:
+            record["detail"] = "broker/account identity could not be proven for this drill"
         else:
             paper_proven = bool(getattr(broker, "is_paper_only", lambda: False)())
+            if broker_proof.get("provably_paper") is False:
+                paper_proven = False
             record["paper_proven"] = paper_proven
             if not paper_proven:
                 record["detail"] = "broker is not provably paper"
