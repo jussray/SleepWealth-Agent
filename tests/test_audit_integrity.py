@@ -97,6 +97,40 @@ async def test_chain_looking_legacy_record_stays_outside_trusted_start(tmp_path)
     assert "boundary marker" in reason
 
 
+async def test_unterminated_legacy_record_can_be_sealed_without_changing_legacy_bytes(tmp_path):
+    path = tmp_path / "audit.log"
+    legacy = b'{"event":"old","legacy":true}'
+    path.write_bytes(legacy)
+    audit = AuditLogger(str(path))
+
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
+    head = audit.observed_terminal_hash()
+    ok, reason, events, _ = AuditLogger.verify_snapshot_file(path, start, head)
+
+    assert ok is True, reason
+    assert [event["event"] for event in events] == ["audit_ready"]
+    raw = path.read_bytes()
+    assert raw.startswith(legacy + b"\n")
+    boundary = json.loads(raw.splitlines()[1])
+    assert boundary["legacy_separator_added"] is True
+    assert boundary["prev_hash"] == hashlib.sha256(legacy).hexdigest()
+
+
+async def test_opaque_invalid_utf8_and_json_scalars_remain_legacy(tmp_path):
+    path = tmp_path / "audit.log"
+    legacy = b"\xff\xfeopaque\n42\n[1,2,3]\n"
+    path.write_bytes(legacy)
+    audit = AuditLogger(str(path))
+
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
+    head = audit.observed_terminal_hash()
+    ok, reason, events, _ = AuditLogger.verify_snapshot_file(path, start, head)
+
+    assert ok is True, reason
+    assert [event["event"] for event in events] == ["audit_ready"]
+    assert events[0]["prev_hash"] == hashlib.sha256(legacy).hexdigest()
+
+
 async def test_concurrent_writers_serialize_predecessor_selection_and_append(tmp_path):
     path = tmp_path / "audit.log"
     first = AuditLogger(str(path))
