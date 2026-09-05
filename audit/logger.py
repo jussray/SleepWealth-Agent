@@ -35,6 +35,15 @@ def _is_hash(value: object) -> bool:
     )
 
 
+def _json_object(raw_line: bytes) -> dict | None:
+    """Decode one JSON object without requiring legacy bytes to be valid text."""
+    try:
+        value = json.loads(raw_line)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 class AuditLogger:
     """Append-only, hash-chained JSONL evidence trail.
 
@@ -68,25 +77,58 @@ class AuditLogger:
 
         lines = [line for line in raw.splitlines() if line.strip()]
         if lines:
-            try:
-                last = json.loads(lines[-1])
-            except json.JSONDecodeError:
-                last = {}
+            last = _json_object(lines[-1]) or {}
             entry_hash = last.get("entry_hash")
             if _is_hash(entry_hash):
                 return str(entry_hash).lower()
 
-        # Normal first chained append over an unchained file seals exact bytes.
+        # A normal append over an unchained file remains untrusted until an
+        # explicit trusted-start boundary is created and externally anchored.
         return hashlib.sha256(raw).hexdigest()
+
+    @staticmethod
+    def _tail_entry_hash(fh) -> str | None:
+        """Read only the final nonblank JSONL record during steady-state appends."""
+        fh.seek(0, os.SEEK_END)
+        position = fh.tell()
+        if position == 0:
+            return GENESIS_HASH
+
+        buffer = b""
+        while position > 0:
+            read_size = min(8192, position)
+            position -= read_size
+            fh.seek(position)
+            buffer = fh.read(read_size) + buffer
+            trimmed = buffer.rstrip()
+            if not trimmed:
+                continue
+
+            newline = max(trimmed.rfind(b"\n"), trimmed.rfind(b"\r"))
+            if newline >= 0 or position == 0:
+                raw_line = trimmed[newline + 1 :]
+                last = _json_object(raw_line) or {}
+                entry_hash = last.get("entry_hash")
+                return str(entry_hash).lower() if _is_hash(entry_hash) else None
+
+        return None
 
     def _append_sync(self, event: dict, trusted_start: bool = False) -> str:
         with self._locked_audit_file() as fh:
-            fh.seek(0)
-            raw = fh.read()
+            separator_added = False
             if trusted_start:
+                fh.seek(0)
+                raw = fh.read()
                 prev_hash = hashlib.sha256(raw).hexdigest() if raw else GENESIS_HASH
+                separator_added = bool(raw and not raw.endswith((b"\n", b"\r")))
             else:
-                prev_hash = self._previous_hash_from_raw(raw)
+                prev_hash = self._tail_entry_hash(fh)
+                if prev_hash is None:
+                    # Legacy/untrusted fallback only. Normal chained appends read
+                    # the tail instead of rereading the complete audit history.
+                    fh.seek(0)
+                    raw = fh.read()
+                    prev_hash = self._previous_hash_from_raw(raw)
 
             record = {
                 **event,
@@ -95,10 +137,13 @@ class AuditLogger:
             }
             if trusted_start:
                 record["chain_boundary"] = TRUSTED_START_MARKER
+                record["legacy_separator_added"] = separator_added
             record["entry_hash"] = hashlib.sha256(_canonical_event(record)).hexdigest()
             encoded = (json.dumps(record, default=str, sort_keys=True) + "\n").encode("utf-8")
 
             fh.seek(0, os.SEEK_END)
+            if separator_added:
+                fh.write(b"\n")
             fh.write(encoded)
             fh.flush()
             os.fsync(fh.fileno())
@@ -122,15 +167,17 @@ class AuditLogger:
         if not self.log_path.exists():
             return []
         events = []
-        with open(self.log_path, encoding="utf-8") as fh:
+        with open(self.log_path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    events.append(json.loads(line))
+                    value = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if isinstance(value, dict):
+                    events.append(value)
         return events[-limit:]
 
     def observed_terminal_hash(self) -> str:
@@ -142,16 +189,9 @@ class AuditLogger:
         """
         if not self.log_path.exists() or self.log_path.stat().st_size == 0:
             return ""
-        raw = self.log_path.read_bytes()
-        lines = [line for line in raw.splitlines() if line.strip()]
-        if not lines:
-            return ""
-        try:
-            last = json.loads(lines[-1])
-        except json.JSONDecodeError:
-            return ""
-        entry_hash = last.get("entry_hash")
-        return str(entry_hash).lower() if _is_hash(entry_hash) else ""
+        with open(self.log_path, "rb") as fh:
+            entry_hash = self._tail_entry_hash(fh)
+        return entry_hash or ""
 
     @classmethod
     def verify_snapshot_file(
@@ -164,7 +204,7 @@ class AuditLogger:
 
         All bytes before the trusted-start entry are opaque legacy bytes. They do
         not become evidence even if they contain syntactically valid chain fields.
-        The trusted-start entry must seal the SHA-256 of that exact prefix.
+        The trusted-start entry must seal the SHA-256 of that exact legacy prefix.
         """
         path = Path(log_path)
         if not path.exists() or path.stat().st_size == 0:
@@ -181,13 +221,13 @@ class AuditLogger:
         start_event: dict | None = None
 
         # Locate the independently anchored boundary first. Everything before it
-        # is legacy regardless of whether it contains forged chain-looking fields.
+        # is opaque legacy, including invalid UTF-8, JSON scalars, arrays, and
+        # forged chain-looking objects.
         for zero_index, raw_line in enumerate(raw_lines):
             if not raw_line.strip():
                 continue
-            try:
-                candidate = json.loads(raw_line)
-            except json.JSONDecodeError:
+            candidate = _json_object(raw_line)
+            if not candidate:
                 continue
             if str(candidate.get("entry_hash", "")).lower() == str(expected_start_hash).lower():
                 start_index = zero_index
@@ -200,7 +240,19 @@ class AuditLogger:
             return False, "trusted audit start entry lacks required boundary marker", [], ""
 
         legacy_prefix = b"".join(raw_lines[:start_index])
-        expected_prev = hashlib.sha256(legacy_prefix).hexdigest() if legacy_prefix else GENESIS_HASH
+        separator_added = start_event.get("legacy_separator_added") is True
+        if separator_added:
+            if not legacy_prefix.endswith(b"\n"):
+                return False, "trusted audit separator marker does not match snapshot", [], ""
+            sealed_legacy_prefix = legacy_prefix[:-1]
+        else:
+            sealed_legacy_prefix = legacy_prefix
+
+        expected_prev = (
+            hashlib.sha256(sealed_legacy_prefix).hexdigest()
+            if sealed_legacy_prefix
+            else GENESIS_HASH
+        )
         if str(start_event.get("prev_hash", "")).lower() != expected_prev:
             return False, "trusted audit start does not seal exact legacy prefix", [], ""
 
@@ -211,10 +263,9 @@ class AuditLogger:
             line_number = zero_index + 1
             if not raw_line.strip():
                 continue
-            try:
-                event = json.loads(raw_line)
-            except json.JSONDecodeError:
-                return False, f"audit line {line_number} is not valid JSON", [], ""
+            event = _json_object(raw_line)
+            if event is None:
+                return False, f"audit line {line_number} is not a JSON object", [], ""
 
             prev_hash = event.get("prev_hash")
             entry_hash = event.get("entry_hash")
@@ -222,7 +273,8 @@ class AuditLogger:
                 return False, f"audit line {line_number} is unchained after trusted start", [], ""
 
             expected_prev = (
-                hashlib.sha256(legacy_prefix).hexdigest() if previous_entry_hash is None and legacy_prefix
+                hashlib.sha256(sealed_legacy_prefix).hexdigest()
+                if previous_entry_hash is None and sealed_legacy_prefix
                 else (GENESIS_HASH if previous_entry_hash is None else previous_entry_hash)
             )
             if str(prev_hash).lower() != expected_prev:
