@@ -1,5 +1,6 @@
 """The gate must fail closed and never mint execution authority."""
 import json
+from datetime import datetime, timedelta, timezone
 
 from audit.logger import AuditLogger
 from gate.live_gate import (
@@ -7,6 +8,7 @@ from gate.live_gate import (
     GateResult,
     KILL_SWITCH_RECEIPT_VERSION,
     LiveGate,
+    _broker_receipt_binding,
     _sign_kill_switch_receipt,
     run_kill_switch_drill,
 )
@@ -21,6 +23,32 @@ def anchored_config(start, head, **extra):
         "kill_switch_receipt_key": RECEIPT_KEY,
         **extra,
     }
+
+
+class BoundPaperBroker:
+    def __init__(self, account="DU1", states=None, cancel_ok=True):
+        self.account = account
+        self.states = iter(states or ["Submitted", "Cancelled"])
+        self.cancel_ok = cancel_ok
+        self.cancel_called = False
+
+    def is_paper_only(self):
+        return True
+
+    def paper_proof(self):
+        return {
+            "port": 4002,
+            "managed_accounts": [self.account],
+            "configured_paper": True,
+            "provably_paper": True,
+        }
+
+    async def get_order_status(self, _order_id):
+        return {"status": next(self.states)}
+
+    async def cancel_all(self):
+        self.cancel_called = True
+        return self.cancel_ok
 
 
 def test_gate_closed_on_empty_audit(tmp_path):
@@ -112,27 +140,13 @@ async def test_kill_switch_drill_requires_broker_bound_working_paper_order_and_t
     audit = AuditLogger(str(path))
     start = await audit.start_trusted_chain({"event": "audit_ready"})
 
-    class PaperBroker:
-        def __init__(self):
-            self.states = iter(["Submitted", "Submitted", "Cancelled"])
-            self.cancel_called = False
-
-        def is_paper_only(self):
-            return True
-
-        async def get_order_status(self, _order_id):
-            return {"status": next(self.states)}
-
-        async def cancel_all(self):
-            self.cancel_called = True
-            return True
-
-    broker = PaperBroker()
+    broker = BoundPaperBroker(states=["Submitted", "Submitted", "Cancelled"])
     record = await run_kill_switch_drill(
         broker,
         audit,
         working_order_id="paper-42",
         receipt_key=RECEIPT_KEY,
+        expected_account="DU1",
         status_attempts=3,
         status_interval=0,
     )
@@ -145,11 +159,18 @@ async def test_kill_switch_drill_requires_broker_bound_working_paper_order_and_t
     assert record["terminal_status"] == "Cancelled"
     assert record["broker_cancel_path"] == "cancel_all"
     assert record["broker_status_path"] == "get_order_status"
+    assert record["target_account"] == "DU1"
+    assert len(record["broker_proof_hash"]) == 64
+    assert datetime.fromisoformat(record["occurred_at"]).tzinfo is not None
     assert len(record["receipt_auth"]) == 64
 
     head = audit.observed_terminal_hash()
     gate = LiveGate(audit_path=str(path))
-    result = gate.evaluate(rules={}, config=anchored_config(start, head))
+    result = gate.evaluate(
+        broker=broker,
+        rules={},
+        config=anchored_config(start, head, expected_account="DU1"),
+    )
     integrity = next(c for c in result.checks if c.name == "audit_integrity")
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert integrity.passed is True
@@ -160,6 +181,8 @@ async def test_gate_rejects_hand_logged_kill_switch_receipt_without_authenticati
     path = tmp_path / "audit.log"
     audit = AuditLogger(str(path))
     start = await audit.start_trusted_chain({"event": "audit_ready"})
+    broker = BoundPaperBroker()
+    binding, target, _accounts, _proof = _broker_receipt_binding(broker, "DU1")
     await audit.log({
         "event": "kill_switch_drill",
         "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
@@ -171,12 +194,16 @@ async def test_gate_rejects_hand_logged_kill_switch_receipt_without_authenticati
         "broker_status_path": "get_order_status",
         "pre_cancel_status": "Submitted",
         "terminal_status": "Cancelled",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "target_account": target,
+        "broker_proof_hash": binding,
     })
     head = audit.observed_terminal_hash()
 
     result = LiveGate(audit_path=str(path)).evaluate(
+        broker=broker,
         rules={},
-        config=anchored_config(start, head),
+        config=anchored_config(start, head, expected_account="DU1"),
     )
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert ks.passed is False
@@ -186,6 +213,8 @@ async def test_gate_rejects_authenticated_receipt_without_recorded_working_state
     path = tmp_path / "audit.log"
     audit = AuditLogger(str(path))
     start = await audit.start_trusted_chain({"event": "audit_ready"})
+    broker = BoundPaperBroker()
+    binding, target, _accounts, _proof = _broker_receipt_binding(broker, "DU1")
     forged = {
         "event": "kill_switch_drill",
         "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
@@ -197,14 +226,113 @@ async def test_gate_rejects_authenticated_receipt_without_recorded_working_state
         "broker_status_path": "get_order_status",
         "pre_cancel_status": "Cancelled",
         "terminal_status": "Cancelled",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "target_account": target,
+        "broker_proof_hash": binding,
     }
     forged["receipt_auth"] = _sign_kill_switch_receipt(forged, RECEIPT_KEY)
     await audit.log(forged)
     head = audit.observed_terminal_hash()
 
     result = LiveGate(audit_path=str(path)).evaluate(
+        broker=broker,
         rules={},
-        config=anchored_config(start, head),
+        config=anchored_config(start, head, expected_account="DU1"),
+    )
+    ks = next(c for c in result.checks if c.name == "kill_switch_tested")
+    assert ks.passed is False
+
+
+async def test_gate_rejects_relogged_old_authenticated_receipt(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
+    broker = BoundPaperBroker()
+    binding, target, _accounts, _proof = _broker_receipt_binding(broker, "DU1")
+    old = {
+        "event": "kill_switch_drill",
+        "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
+        "result": "passed",
+        "detail": "historically valid drill replayed later",
+        "paper_proven": True,
+        "working_order_id": "paper-old",
+        "broker_cancel_path": "cancel_all",
+        "broker_status_path": "get_order_status",
+        "pre_cancel_status": "Submitted",
+        "terminal_status": "Cancelled",
+        "occurred_at": (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
+        "target_account": target,
+        "broker_proof_hash": binding,
+    }
+    old["receipt_auth"] = _sign_kill_switch_receipt(old, RECEIPT_KEY)
+    await audit.log(old)
+    head = audit.observed_terminal_hash()
+
+    result = LiveGate(audit_path=str(path), kill_switch_max_age_days=7).evaluate(
+        broker=broker,
+        rules={},
+        config=anchored_config(start, head, expected_account="DU1"),
+    )
+    ks = next(c for c in result.checks if c.name == "kill_switch_tested")
+    assert ks.passed is False
+    assert "30d ago" in ks.reason
+
+
+async def test_gate_rejects_receipt_from_different_broker_account(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
+    broker_a = BoundPaperBroker(account="DU1", states=["Submitted", "Cancelled"])
+    record = await run_kill_switch_drill(
+        broker_a,
+        audit,
+        working_order_id="paper-42",
+        receipt_key=RECEIPT_KEY,
+        expected_account="DU1",
+        status_interval=0,
+    )
+    assert record["result"] == "passed"
+    head = audit.observed_terminal_hash()
+
+    broker_b = BoundPaperBroker(account="DU2")
+    result = LiveGate(audit_path=str(path)).evaluate(
+        broker=broker_b,
+        rules={},
+        config=anchored_config(start, head, expected_account="DU2"),
+    )
+    ks = next(c for c in result.checks if c.name == "kill_switch_tested")
+    assert ks.passed is False
+
+
+async def test_gate_rejects_non_ascii_receipt_digest_without_raising(tmp_path):
+    path = tmp_path / "audit.log"
+    audit = AuditLogger(str(path))
+    start = await audit.start_trusted_chain({"event": "audit_ready"})
+    broker = BoundPaperBroker()
+    binding, target, _accounts, _proof = _broker_receipt_binding(broker, "DU1")
+    malformed = {
+        "event": "kill_switch_drill",
+        "receipt_version": KILL_SWITCH_RECEIPT_VERSION,
+        "result": "passed",
+        "detail": "malformed digest",
+        "paper_proven": True,
+        "working_order_id": "paper-42",
+        "broker_cancel_path": "cancel_all",
+        "broker_status_path": "get_order_status",
+        "pre_cancel_status": "Submitted",
+        "terminal_status": "Cancelled",
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "target_account": target,
+        "broker_proof_hash": binding,
+        "receipt_auth": "é" * 64,
+    }
+    await audit.log(malformed)
+    head = audit.observed_terminal_hash()
+
+    result = LiveGate(audit_path=str(path)).evaluate(
+        broker=broker,
+        rules={},
+        config=anchored_config(start, head, expected_account="DU1"),
     )
     ks = next(c for c in result.checks if c.name == "kill_switch_tested")
     assert ks.passed is False
@@ -252,11 +380,13 @@ async def test_kill_switch_drill_fails_closed_without_trusted_receipt_key(tmp_pa
     audit = AuditLogger(str(path))
     await audit.start_trusted_chain({"event": "audit_ready"})
 
-    class PaperBroker:
-        def is_paper_only(self):
-            return True
-
-    record = await run_kill_switch_drill(PaperBroker(), audit, working_order_id="paper-42")
+    broker = BoundPaperBroker()
+    record = await run_kill_switch_drill(
+        broker,
+        audit,
+        working_order_id="paper-42",
+        expected_account="DU1",
+    )
     assert record["result"] == "failed"
     assert "receipt key" in record["detail"]
     assert record["receipt_auth"] == ""
@@ -267,11 +397,13 @@ async def test_kill_switch_drill_cannot_pass_without_order_id(tmp_path):
     audit = AuditLogger(str(path))
     await audit.start_trusted_chain({"event": "audit_ready"})
 
-    class PaperBroker:
-        def is_paper_only(self):
-            return True
-
-    record = await run_kill_switch_drill(PaperBroker(), audit, receipt_key=RECEIPT_KEY)
+    broker = BoundPaperBroker()
+    record = await run_kill_switch_drill(
+        broker,
+        audit,
+        receipt_key=RECEIPT_KEY,
+        expected_account="DU1",
+    )
     assert record["result"] == "failed"
     assert "order id is required" in record["detail"]
 
