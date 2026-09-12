@@ -6,8 +6,11 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
+STOCK_LANE_INSTRUMENT_TYPES = {"EQUITY", "ETF", "MUTUALFUND"}
+
+
 class YahooPublicChartProvider:
-    """Read-only public market observations. This provider has no execution methods."""
+    """Read-only stock/fund observations. Crypto-native instruments are rejected."""
 
     source_name = "yahoo-public-chart"
     source_classification = "external-public-delayed"
@@ -21,7 +24,7 @@ class YahooPublicChartProvider:
         request = Request(
             url,
             headers={
-                "User-Agent": "SleepWealth/0.4 read-only-market-observer",
+                "User-Agent": "SleepWealth/0.5 read-only-stock-observer",
                 "Accept": "application/json",
             },
         )
@@ -30,7 +33,7 @@ class YahooPublicChartProvider:
 
     def _read_symbol(self, symbol: str) -> dict:
         normalized = str(symbol).strip().upper()
-        if not normalized or len(normalized) > 12:
+        if not normalized or len(normalized) > 14:
             raise ValueError("market symbol is invalid")
 
         encoded = quote(normalized, safe="-^.")
@@ -46,6 +49,14 @@ class YahooPublicChartProvider:
             raise ValueError(f"external market source returned no observation for {normalized}")
 
         result = results[0]
+        meta = result.get("meta") or {}
+        instrument_type = str(meta.get("instrumentType") or "").strip().upper()
+        if instrument_type not in STOCK_LANE_INSTRUMENT_TYPES:
+            observed = instrument_type or "UNKNOWN"
+            raise ValueError(
+                f"{normalized} is not eligible for the stock lane: instrument type {observed}"
+            )
+
         timestamps = result.get("timestamp") or []
         indicators = result.get("indicators") or {}
         quotes = indicators.get("quote") or []
@@ -65,7 +76,6 @@ class YahooPublicChartProvider:
             raise ValueError(f"external market source returned no usable close for {normalized}")
 
         timestamp, price = pair
-        meta = result.get("meta") or {}
         return {
             "symbol": str(meta.get("symbol") or normalized).upper(),
             "price": price,
@@ -75,6 +85,9 @@ class YahooPublicChartProvider:
             "timestamp": datetime.fromtimestamp(timestamp, tz=timezone.utc),
             "source_name": self.source_name,
             "source_classification": self.source_classification,
+            "instrument_type": instrument_type,
+            "lane": "stock-market",
+            "crypto_native": False,
         }
 
     async def get_market_data(self, symbol: str) -> dict:
