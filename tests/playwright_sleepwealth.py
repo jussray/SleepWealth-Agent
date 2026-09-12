@@ -14,15 +14,18 @@ def prove(context, name):
     assert response is not None and response.ok
 
     expect(page.get_by_role("heading", name="Sleep Wealth")).to_be_visible()
-    expect(page.get_by_text("READ-ONLY MARKET OBSERVATION", exact=False)).to_be_visible()
+    expect(page.get_by_text("REAL DATA WATCH", exact=False)).to_be_visible()
     expect(page.get_by_text("Live execution stays disabled", exact=False)).to_be_visible()
+    expect(page.get_by_text("Observe", exact=True)).to_be_visible()
+    expect(page.get_by_text("Simulate", exact=True)).to_be_visible()
 
     for symbol in ("AAPL", "MSFT", "VTI"):
         card = page.locator(f'[data-symbol="{symbol}"]')
         expect(card).to_be_visible()
         expect(card).to_contain_text(symbol)
         expect(card).to_contain_text("mock-market-observation")
-        expect(card).to_contain_text("read-only")
+        expect(card).to_contain_text("SIMULATED FEED")
+        expect(card).to_contain_text("fp")
 
     page.get_by_role("button", name="Observe + run paper test").click()
     result = page.locator("#result")
@@ -30,6 +33,10 @@ def prove(context, name):
     expect(result).to_contain_text('"approved_symbols": [')
     expect(result).to_contain_text('"read_only": true')
     expect(result).to_contain_text('"live_execution": false')
+    expect(result).to_contain_text('"continuity_cookie": "sw-market-v1:')
+    expect(result).to_contain_text('"decision_cookie": "sw-decision-v1:')
+    expect(result).to_contain_text('"outcome_cookie": "sw-outcome-v1:')
+    expect(result).to_contain_text('"fill_classification": "SIMULATED_AT_OBSERVED_PRICE"')
     expect(result).to_contain_text(
         '"truth": "read-only market observation; paper simulation only; no real money moved"'
     )
