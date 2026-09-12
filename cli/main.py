@@ -9,6 +9,7 @@ from broker.factory import get_broker
 from engine.evaluator import ProposalEvaluator
 from engine.validator import RulesValidator
 from execution.executor import ExecutionManager
+from market.observation import observe_market
 from portfolio.tracker import PortfolioTracker
 from risk.gates import RiskGates
 from rules import load_rules
@@ -45,6 +46,16 @@ async def _run(mode, broker, symbol, qty, side, auto_approve):
     account = await portfolio.refresh()
     typer.echo(f"[ACCOUNT] cash=${account.balance.cash:.2f} equity=${account.balance.equity:.2f}")
 
+    observation = await observe_market(
+        broker_instance,
+        symbol,
+        source=f"{broker}-market-observation",
+    )
+    typer.echo(
+        f"[MARKET] {observation.symbol} observed=${observation.price:.2f} "
+        f"source={observation.source} read_only={observation.read_only}"
+    )
+
     evaluator = ProposalEvaluator(rules)
     queue = ApprovalQueue()
     audit = AuditLogger()
@@ -52,11 +63,17 @@ async def _run(mode, broker, symbol, qty, side, auto_approve):
     executor = ExecutionManager(broker_instance, queue, audit, gates)
 
     order = Order(symbol=symbol, qty=qty, side=side)
-    evaluation = evaluator.evaluate(order, account)
+    evaluation = evaluator.evaluate(order, account, price=observation.price)
     typer.echo(f"[EVAL] allowed={evaluation['allowed']} risk={evaluation['risk_score']}% | {evaluation['reason']}")
 
     if not evaluation["allowed"]:
-        await audit.log({"event": "proposal_rejected_by_evaluator", "reason": evaluation["reason"]})
+        await audit.log(
+            {
+                "event": "proposal_rejected_by_evaluator",
+                "reason": evaluation["reason"],
+                "market_observation": observation.to_dict(),
+            }
+        )
         typer.echo("[REJECTED] evaluator blocked this order")
         raise typer.Exit(1)
 
@@ -101,6 +118,7 @@ def run(
 @app.command()
 def status(broker: str = typer.Option("mock")):
     """Show account cash and equity."""
+
     async def _status():
         b = get_broker(broker, paper_only=True)
         if not await b.connect():
@@ -109,6 +127,7 @@ def status(broker: str = typer.Option("mock")):
         acct = await b.get_account_summary()
         typer.echo(f"cash:   ${acct.get('cash', 0):.2f}")
         typer.echo(f"equity: ${acct.get('equity', 0):.2f}")
+
     asyncio.run(_status())
 
 
