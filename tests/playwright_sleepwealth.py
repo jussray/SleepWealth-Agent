@@ -14,10 +14,36 @@ def prove(context, name):
     assert response is not None and response.ok
 
     expect(page.get_by_role("heading", name="Sleep Wealth")).to_be_visible()
+    expect(page.get_by_text("NIGHT MINERAL", exact=False)).to_be_visible()
     expect(page.get_by_text("REAL DATA WATCH", exact=False)).to_be_visible()
     expect(page.get_by_text("Live execution stays disabled", exact=False)).to_be_visible()
-    expect(page.get_by_text("Observe", exact=True)).to_be_visible()
-    expect(page.get_by_text("Simulate", exact=True)).to_be_visible()
+
+    steps = page.get_by_label("Paper cycle")
+    expect(steps).to_contain_text("Observe")
+    expect(steps).to_contain_text("Evaluate")
+    expect(steps).to_contain_text("Simulate")
+    expect(steps).to_contain_text("Receipt")
+
+    theme = page.evaluate(
+        """() => {
+            const root = document.documentElement;
+            const style = getComputedStyle(root);
+            return {
+                name: root.dataset.theme,
+                lichen: style.getPropertyValue('--lichen').trim(),
+                copper: style.getPropertyValue('--copper').trim(),
+                bone: style.getPropertyValue('--bone').trim(),
+                glacier: style.getPropertyValue('--glacier').trim(),
+            };
+        }"""
+    )
+    assert theme == {
+        "name": "night-mineral",
+        "lichen": "#d6ff45",
+        "copper": "#c8784d",
+        "bone": "#eee5cc",
+        "glacier": "#9ae7df",
+    }
 
     for symbol in ("AAPL", "MSFT", "VTI"):
         card = page.locator(f'[data-symbol="{symbol}"]')
