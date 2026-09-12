@@ -7,10 +7,20 @@ from urllib.request import Request, urlopen
 
 
 STOCK_LANE_INSTRUMENT_TYPES = {"EQUITY", "ETF", "MUTUALFUND"}
+CRYPTO_LANE_INSTRUMENT_TYPES = {"CRYPTOCURRENCY"}
+
+
+def classify_lane(instrument_type: str) -> str:
+    normalized = str(instrument_type or "").strip().upper()
+    if normalized in STOCK_LANE_INSTRUMENT_TYPES:
+        return "stock-market"
+    if normalized in CRYPTO_LANE_INSTRUMENT_TYPES:
+        return "crypto"
+    return "other"
 
 
 class YahooPublicChartProvider:
-    """Read-only stock/fund observations. Crypto-native instruments are rejected."""
+    """Read-only market observations with lane classification and no execution methods."""
 
     source_name = "yahoo-public-chart"
     source_classification = "external-public-delayed"
@@ -24,7 +34,7 @@ class YahooPublicChartProvider:
         request = Request(
             url,
             headers={
-                "User-Agent": "SleepWealth/0.5 read-only-stock-observer",
+                "User-Agent": "SleepWealth/0.6 read-only-market-observer",
                 "Accept": "application/json",
             },
         )
@@ -33,7 +43,7 @@ class YahooPublicChartProvider:
 
     def _read_symbol(self, symbol: str) -> dict:
         normalized = str(symbol).strip().upper()
-        if not normalized or len(normalized) > 14:
+        if not normalized or len(normalized) > 20:
             raise ValueError("market symbol is invalid")
 
         encoded = quote(normalized, safe="-^.")
@@ -51,11 +61,7 @@ class YahooPublicChartProvider:
         result = results[0]
         meta = result.get("meta") or {}
         instrument_type = str(meta.get("instrumentType") or "").strip().upper()
-        if instrument_type not in STOCK_LANE_INSTRUMENT_TYPES:
-            observed = instrument_type or "UNKNOWN"
-            raise ValueError(
-                f"{normalized} is not eligible for the stock lane: instrument type {observed}"
-            )
+        lane = classify_lane(instrument_type)
 
         timestamps = result.get("timestamp") or []
         indicators = result.get("indicators") or {}
@@ -85,9 +91,9 @@ class YahooPublicChartProvider:
             "timestamp": datetime.fromtimestamp(timestamp, tz=timezone.utc),
             "source_name": self.source_name,
             "source_classification": self.source_classification,
-            "instrument_type": instrument_type,
-            "lane": "stock-market",
-            "crypto_native": False,
+            "instrument_type": instrument_type or "UNKNOWN",
+            "lane": lane,
+            "crypto_native": lane == "crypto",
         }
 
     async def get_market_data(self, symbol: str) -> dict:
