@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from approvals.queue import ApprovalQueue, ApprovalStatus
 from audit.logger import AuditLogger
 from broker.base import BaseBroker, Order
@@ -76,14 +74,18 @@ class ExecutionManager:
         self.active_orders[order_id] = proposal_id
         self.approval_queue.mark_executed(proposal_id, order_id)
 
+        receipt = {**result, "order_id": order_id, "status": result.get("status", "submitted")}
         await self.audit_logger.log({
             "event": "order_submitted",
             "proposal_id": proposal_id,
             "order_id": order_id,
-            "status": result.get("status"),
+            "status": receipt["status"],
+            "filled_price": receipt.get("filled_price"),
+            "filled_qty": receipt.get("filled_qty"),
+            "fill_classification": receipt.get("fill_classification"),
         })
 
-        return {"order_id": order_id, "status": result.get("status", "submitted")}
+        return receipt
 
     async def check_order_status(self, order_id: str) -> dict:
         return await self.broker.get_order_status(order_id)
