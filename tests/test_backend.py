@@ -125,7 +125,7 @@ async def test_stale_observation_fails_closed():
 
 
 @pytest.mark.asyncio
-async def test_yahoo_public_provider_parses_latest_usable_close():
+async def test_yahoo_public_provider_parses_latest_usable_stock_close():
     timestamp = int(datetime.now(timezone.utc).timestamp())
 
     def fake_fetch(url: str) -> dict:
@@ -135,7 +135,11 @@ async def test_yahoo_public_provider_parses_latest_usable_close():
             "chart": {
                 "result": [
                     {
-                        "meta": {"symbol": "AAPL", "currency": "USD"},
+                        "meta": {
+                            "symbol": "AAPL",
+                            "currency": "USD",
+                            "instrumentType": "EQUITY",
+                        },
                         "timestamp": [timestamp - 86400, timestamp],
                         "indicators": {"quote": [{"close": [118.5, 121.25]}]},
                     }
@@ -150,6 +154,36 @@ async def test_yahoo_public_provider_parses_latest_usable_close():
     assert data["price"] == pytest.approx(121.25)
     assert data["source_name"] == "yahoo-public-chart"
     assert data["source_classification"] == "external-public-delayed"
+    assert data["instrument_type"] == "EQUITY"
+    assert data["lane"] == "stock-market"
+    assert data["crypto_native"] is False
+
+
+@pytest.mark.asyncio
+async def test_yahoo_public_provider_rejects_crypto_native_instrument():
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+
+    def fake_fetch(_url: str) -> dict:
+        return {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {
+                            "symbol": "BTC-USD",
+                            "currency": "USD",
+                            "instrumentType": "CRYPTOCURRENCY",
+                        },
+                        "timestamp": [timestamp],
+                        "indicators": {"quote": [{"close": [50000.0]}]},
+                    }
+                ],
+                "error": None,
+            }
+        }
+
+    provider = YahooPublicChartProvider(fetch_json=fake_fetch)
+    with pytest.raises(ValueError, match="not eligible for the stock lane"):
+        await provider.get_market_data("BTC-USD")
 
 
 @pytest.mark.asyncio
