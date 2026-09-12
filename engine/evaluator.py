@@ -5,12 +5,13 @@ from portfolio.models import AccountState
 
 
 class ProposalEvaluator:
-    """TRUTHMODE gate: is this order actually supported by the rules?"""
+    """TRUTHMODE gate: is this paper order actually supported by the rules?"""
 
     def __init__(self, rules: dict):
         self.rules = rules
         self.floor_cash = rules.get("floor_cash", 5.0)
         self.approved_symbols = set(rules.get("approved_symbols", []))
+        self.symbol_scope = str(rules.get("symbol_scope", "approved")).strip().lower()
         self.max_position_size = rules.get("max_position_size", 1000.0)
         self.ceiling = rules.get("ceiling", {}).get("current", 5.0)
 
@@ -21,8 +22,15 @@ class ProposalEvaluator:
         price = float(price)
         cost = order.qty * price
 
-        if self.approved_symbols and order.symbol not in self.approved_symbols:
-            reasons.append(f"{order.symbol} not in approved_symbols")
+        if self.symbol_scope == "approved":
+            if self.approved_symbols and order.symbol not in self.approved_symbols:
+                reasons.append(f"{order.symbol} not in approved_symbols")
+        elif self.symbol_scope == "observable-market":
+            # The backend must obtain a valid read-only market observation before this
+            # evaluator is called. Observation expands paper eligibility, not authority.
+            pass
+        else:
+            reasons.append(f"unsupported symbol_scope {self.symbol_scope}")
 
         if cost > self.ceiling:
             reasons.append(f"cost ${cost:.2f} exceeds ceiling ${self.ceiling:.2f}")
@@ -44,5 +52,6 @@ class ProposalEvaluator:
             "risk_score": round(risk_score, 2),
             "estimated_cost": cost,
             "observed_price": price,
+            "symbol_scope": self.symbol_scope,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
