@@ -66,6 +66,7 @@ async def test_backend_uses_observed_price_for_evaluation_and_paper_fill(tmp_pat
     assert result["market_observation"]["read_only"] is True
     assert result["evaluation"]["estimated_cost"] == pytest.approx(4.8)
     assert result["evaluation"]["observed_price"] == 120.0
+    assert result["evaluation"]["symbol_scope"] == "observable-market"
     assert result["execution"]["filled_price"] == 120.0
     assert result["execution"]["fill_classification"] == "SIMULATED_AT_OBSERVED_PRICE"
     assert result["account_after"]["cash"] == pytest.approx(9995.2)
@@ -79,6 +80,24 @@ async def test_backend_uses_observed_price_for_evaluation_and_paper_fill(tmp_pat
     assert result["approved_symbols"] == ["AAPL", "MSFT", "VTI"]
     assert result["broker"] == "mock"
     assert result["live_execution"] is False
+
+
+@pytest.mark.asyncio
+async def test_observable_market_scope_allows_non_featured_symbol_in_paper_mode(tmp_path):
+    result = await run_paper_dry_run(
+        "IBM",
+        0.01,
+        "buy",
+        str(tmp_path / "audit.log"),
+        market_provider=ReadOnlyQuoteProvider(120.0),
+    )
+    assert result["status"] == "executed"
+    assert result["order"]["symbol"] == "IBM"
+    assert "IBM" not in result["approved_symbols"]
+    assert result["evaluation"]["symbol_scope"] == "observable-market"
+    assert result["market_observation"]["symbol"] == "IBM"
+    assert result["live_execution"] is False
+    assert result["broker"] == "mock"
 
 
 @pytest.mark.asyncio
