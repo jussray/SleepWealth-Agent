@@ -7,25 +7,16 @@ name = "trading-agent"
 version = "0.1.0"
 description = "Governed trading agent: rules engine, approval queue, risk gates, audit trail."
 requires-python = ">=3.11"
-dependencies = [
-    "typer>=0.12.0",
-    "httpx>=0.25.0",
-]
+dependencies = ["typer>=0.12.0", "httpx>=0.25.0"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.23.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "playwright>=1.47.0,<2",
-]
+dev = ["pytest>=7.4.0", "pytest-asyncio>=0.23.0", "black>=23.0.0", "ruff>=0.1.0", "playwright>=1.47.0,<2"]
 
 [project.scripts]
 trading-agent = "cli.main:app"
 
 [tool.setuptools]
-packages = ["broker", "portfolio", "rules", "engine", "approvals", "execution", "audit", "risk", "cli", "backend"]
+packages = ["broker", "portfolio", "rules", "engine", "approvals", "execution", "audit", "risk", "cli", "backend", "market"]
 
 [tool.setuptools.package-data]
 rules = ["*.json"]

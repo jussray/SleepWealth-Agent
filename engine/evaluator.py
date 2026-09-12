@@ -3,8 +3,6 @@ from datetime import datetime, timezone
 from broker.base import Order
 from portfolio.models import AccountState
 
-ASSUMED_PRICE = 100.0
-
 
 class ProposalEvaluator:
     """TRUTHMODE gate: is this order actually supported by the rules?"""
@@ -16,8 +14,11 @@ class ProposalEvaluator:
         self.max_position_size = rules.get("max_position_size", 1000.0)
         self.ceiling = rules.get("ceiling", {}).get("current", 5.0)
 
-    def evaluate(self, order: Order, account: AccountState, price: float = ASSUMED_PRICE) -> dict:
+    def evaluate(self, order: Order, account: AccountState, price: float) -> dict:
         reasons: list[str] = []
+        if price is None or float(price) <= 0:
+            raise ValueError("a positive observed market price is required")
+        price = float(price)
         cost = order.qty * price
 
         if self.approved_symbols and order.symbol not in self.approved_symbols:
@@ -42,5 +43,6 @@ class ProposalEvaluator:
             "reason": "; ".join(reasons) if reasons else "OK",
             "risk_score": round(risk_score, 2),
             "estimated_cost": cost,
+            "observed_price": price,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
