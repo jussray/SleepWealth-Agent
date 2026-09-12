@@ -17,7 +17,21 @@ class MockBroker(BaseBroker):
     cash: float = 0.0
     positions: dict = field(default_factory=dict)
     orders: dict = field(default_factory=dict)
+    market_prices: dict = field(default_factory=dict)
     order_counter: int = 0
+
+    source_name = "mock-market-observation"
+    source_classification = "synthetic-fixture"
+    max_age_seconds = 5 * 60
+
+    def _price(self, symbol: str) -> float:
+        return float(self.market_prices.get(str(symbol).upper(), MOCK_PRICE))
+
+    def set_market_price(self, symbol: str, price: float) -> None:
+        price = float(price)
+        if price <= 0:
+            raise ValueError("mock market price must be greater than zero")
+        self.market_prices[str(symbol).upper()] = price
 
     async def connect(self) -> bool:
         self.cash = self.initial_cash
@@ -25,7 +39,7 @@ class MockBroker(BaseBroker):
         return True
 
     async def get_account_summary(self) -> dict:
-        equity = self.cash + sum(q * MOCK_PRICE for q in self.positions.values())
+        equity = self.cash + sum(q * self._price(symbol) for symbol, q in self.positions.items())
         return {
             "cash": self.cash,
             "equity": equity,
@@ -34,7 +48,7 @@ class MockBroker(BaseBroker):
 
     async def get_positions(self) -> List[Position]:
         return [
-            Position(symbol=s, qty=q, avg_price=MOCK_PRICE)
+            Position(symbol=s, qty=q, avg_price=self._price(s))
             for s, q in self.positions.items()
             if q != 0
         ]
@@ -46,7 +60,8 @@ class MockBroker(BaseBroker):
         if order.qty <= 0:
             return {"order_id": order_id, "status": "rejected", "reason": "qty must be > 0"}
 
-        cost = order.qty * MOCK_PRICE
+        fill_price = self._price(order.symbol)
+        cost = order.qty * fill_price
 
         if order.side == "buy":
             if cost > self.cash:
@@ -64,8 +79,9 @@ class MockBroker(BaseBroker):
 
         record = {
             "status": "filled",
-            "filled_price": MOCK_PRICE,
+            "filled_price": fill_price,
             "filled_qty": order.qty,
+            "fill_classification": "SIMULATED_AT_OBSERVED_PRICE",
             "timestamp": datetime.now(timezone.utc),
         }
         self.orders[order_id] = record
@@ -80,12 +96,15 @@ class MockBroker(BaseBroker):
         return {"order_id": order_id, **self.orders[order_id]}
 
     async def get_market_data(self, symbol: str) -> dict:
+        price = self._price(symbol)
         return {
             "symbol": symbol,
-            "price": MOCK_PRICE,
-            "bid": MOCK_PRICE - 0.5,
-            "ask": MOCK_PRICE + 0.5,
+            "price": price,
+            "bid": price - 0.5,
+            "ask": price + 0.5,
             "timestamp": datetime.now(timezone.utc),
+            "source_name": self.source_name,
+            "source_classification": self.source_classification,
         }
 
     def is_paper_only(self) -> bool:
