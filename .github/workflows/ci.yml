@@ -33,3 +33,31 @@ jobs:
 
       - name: Paper smoke test
         run: python -m cli.main run --mode paper --broker mock --symbol AAPL --qty 0.04 --side buy --auto-approve
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Start Sleep Wealth backend
+        run: |
+          SLEEPWEALTH_AUDIT_LOG=/tmp/sleepwealth-audit.log python -m backend.server --host 127.0.0.1 --port 8765 >/tmp/sleepwealth-backend.log 2>&1 &
+          echo $! >/tmp/sleepwealth-backend.pid
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8765/health >/tmp/sleepwealth-health.json; then
+              cat /tmp/sleepwealth-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/sleepwealth-backend.log
+          exit 1
+
+      - name: Playwright Sleep Wealth proof
+        run: python tests/playwright_sleepwealth.py
+
+      - name: Upload Sleep Wealth Playwright proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sleepwealth-playwright-proof
+          path: artifacts/
+          if-no-files-found: warn
