@@ -1,11 +1,25 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "floor_cash": 5.0,
   "max_daily_loss": 100.0,
   "max_position_size": 1000.0,
   "symbol_scope": "observable-market",
   "approved_symbols": ["AAPL", "MSFT", "VTI"],
   "featured_symbols": ["AAPL", "MSFT", "VTI"],
+  "lanes": {
+    "stock-market": {
+      "enabled": true,
+      "paper_only": true,
+      "symbol_scope": "us-listed-directory",
+      "featured_symbols": ["AAPL", "MSFT", "VTI"]
+    },
+    "crypto": {
+      "enabled": true,
+      "paper_only": true,
+      "symbol_scope": "classified-observation",
+      "featured_symbols": ["BTC-USD", "ETH-USD", "SOL-USD"]
+    }
+  },
   "modes": {
     "truthmode": true,
     "redteam": true,
