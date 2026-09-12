@@ -15,6 +15,9 @@ class MarketObservation:
     retrieved_at: str
     source: str
     source_classification: str
+    instrument_type: str
+    lane: str
+    crypto_native: bool
     classification: str
     freshness: str
     age_seconds: int
@@ -77,6 +80,9 @@ async def observe_market(provider: Any, symbol: str, source: str | None = None) 
         or getattr(provider, "source_classification", "external-or-injected")
     )
     normalized_symbol = str(data.get("symbol") or symbol).upper()
+    instrument_type = str(data.get("instrument_type") or "UNKNOWN").strip().upper()
+    lane = str(data.get("lane") or "unclassified").strip().lower()
+    crypto_native = bool(data.get("crypto_native", lane == "crypto"))
     observed_at = observed.isoformat()
     retrieved_at = retrieved.isoformat()
     fingerprint = _canonical_hash(
@@ -88,6 +94,9 @@ async def observe_market(provider: Any, symbol: str, source: str | None = None) 
             "observed_at": observed_at,
             "source": source_name,
             "source_classification": source_classification,
+            "instrument_type": instrument_type,
+            "lane": lane,
+            "crypto_native": crypto_native,
             "classification": "OBSERVED",
         }
     )
@@ -101,6 +110,9 @@ async def observe_market(provider: Any, symbol: str, source: str | None = None) 
         retrieved_at=retrieved_at,
         source=source_name,
         source_classification=source_classification,
+        instrument_type=instrument_type,
+        lane=lane,
+        crypto_native=crypto_native,
         classification="OBSERVED",
         freshness="fresh",
         age_seconds=age_seconds,
