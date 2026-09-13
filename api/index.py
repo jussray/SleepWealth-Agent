@@ -3,9 +3,15 @@
 import os
 from urllib.parse import parse_qsl, urlencode, urlparse
 
-# Vercel functions may write only to temporary storage. These audit receipts remain
-# paper-simulation evidence and do not create persistent trading or account authority.
+# Vercel functions may write only to temporary storage. These receipts remain
+# paper-simulation evidence and do not create persistent trading or account
+# authority. Approval state survives requests inside one warm function instance,
+# but /tmp is not claimed to survive a cold start, redeploy, or instance change.
 os.environ.setdefault("SLEEPWEALTH_AUDIT_LOG", "/tmp/sleepwealth-audit.log")
+os.environ.setdefault(
+    "SLEEPWEALTH_APPROVAL_STATE", "/tmp/sleepwealth-paper-approvals.json"
+)
+os.environ.setdefault("SLEEPWEALTH_APPROVAL_STATE_SCOPE", "vercel-instance-ephemeral")
 
 from backend.server import SleepWealthHandler
 
