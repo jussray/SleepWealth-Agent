@@ -1,41 +1,15 @@
-"""Stake ledger.
-
-This replaces the old `floor_cash` semantics, which were wrong for racing.
-
-The old rule said "never let cash drop below $5". With exactly $5 in the
-account that blocks every order forever — the agent sits idle and earns $0.
-Verified: qty=0.001 ($0.10) was rejected as a floor breach.
-
-The racing rule is different and is what was actually meant:
-
-    * A race is STAKED at $5. The engine may spend the whole stake — that is
-      the entire point of a race.
-    * Profit above the stake is SWEPT into a vault at race end.
-    * The vault is locked. No engine can spend from it, ever.
-    * A race never starts below $5. Losses do not compound across races.
-    * The only withdrawal from the vault is the explicit +$5 winner bonus,
-      applied by the harness, never by an engine decision.
-
-So the floor protects the *pool*, not the *stake*. The stake is meant to be
-risked. The pool is meant to survive.
-
-INTERPRETATION FLAG: "winner gets +$5 out of the balance made" is read here as
-the winner's next stake becoming $10 (base $5 + $5 bonus drawn from the vault),
-while the loser resets to $5. If the intent was that the winner keeps its whole
-ending balance instead, change `WINNER_BONUS` / `carry_full_balance` and the
-harness picks it up — no other file needs to change.
-"""
+"""Stake ledger for the local race simulation."""
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List
 
 BASE_STAKE = 5.00
 WINNER_BONUS = 5.00
 
 
 class VaultBreach(Exception):
-    """Raised if anything tries to spend locked profit."""
+    """Raised if anything tries to spend locked simulated profit."""
 
 
 @dataclass
@@ -65,12 +39,7 @@ class LedgerEntry:
 
 
 class StakeLedger:
-    """Tracks stakes and the locked vault across races.
-
-    The vault is deliberately not exposed as a mutable attribute to engines.
-    Only `sweep_profit` (adds) and `_draw_winner_bonus` (subtracts, harness-only)
-    can move it.
-    """
+    """Tracks simulated stakes and the locked vault across races."""
 
     def __init__(self, base_stake: float = BASE_STAKE, winner_bonus: float = WINNER_BONUS):
         self.base_stake = base_stake
@@ -79,11 +48,9 @@ class StakeLedger:
         self._stakes: dict[str, float] = {}
         self.entries: List[LedgerEntry] = []
 
-    # ---- reads -------------------------------------------------------
-
     @property
     def vault(self) -> float:
-        """Locked profit. Read-only to everything outside this class."""
+        """Locked simulated profit. Read-only outside this class."""
         return round(self._vault, 2)
 
     def stake_for(self, engine: str) -> float:
@@ -98,8 +65,6 @@ class StakeLedger:
             )
         return True, f"{engine} staked at ${stake:.2f}"
 
-    # ---- writes ------------------------------------------------------
-
     def settle_race(
         self,
         race_id: int,
@@ -107,11 +72,6 @@ class StakeLedger:
         ending_balance: float,
         is_winner: bool,
     ) -> LedgerEntry:
-        """Close out one engine's race.
-
-        Profit sweeps to the vault. The stake resets to base. A winner gets the
-        bonus added on top for the next race, drawn from the vault if funded.
-        """
         stake = self.stake_for(engine)
         profit = ending_balance - stake
         swept = max(profit, 0.0)
@@ -120,10 +80,8 @@ class StakeLedger:
             self._vault += swept
 
         next_stake = self.base_stake
-
         if is_winner:
-            bonus = self._draw_winner_bonus()
-            next_stake += bonus
+            next_stake += self._draw_winner_bonus()
 
         self._stakes[engine] = next_stake
 
@@ -140,35 +98,32 @@ class StakeLedger:
         return entry
 
     def _draw_winner_bonus(self) -> float:
-        """Harness-only. The single legal withdrawal from the vault."""
+        """Simulation harness-only withdrawal."""
         available = min(self.winner_bonus, self._vault)
         self._vault -= available
         return available
 
     def spend_from_vault(self, amount: float) -> None:
-        """Engines calling this is a bug. It exists to fail loudly."""
         raise VaultBreach(
             f"Attempt to spend ${amount:.2f} from the locked vault. "
-            "Engines race with the stake, never the pool."
+            "Engines race with the simulated stake, never the pool."
         )
-
-    # ---- reporting ---------------------------------------------------
 
     def summary(self) -> dict:
         return {
             "vault": self.vault,
             "base_stake": self.base_stake,
             "stakes": {k: round(v, 2) for k, v in self._stakes.items()},
-            "races_settled": len({e.race_id for e in self.entries}),
+            "races_settled": len({entry.race_id for entry in self.entries}),
         }
 
     def render(self) -> str:
-        s = self.summary()
+        summary = self.summary()
         lines = [
-            f"VAULT (locked, untouchable): ${s['vault']:.2f}",
-            f"Next stakes: "
-            + ", ".join(f"{k} ${v:.2f}" for k, v in s["stakes"].items())
-            if s["stakes"]
+            f"VAULT (locked, untouchable): ${summary['vault']:.2f}",
+            "Next stakes: "
+            + ", ".join(f"{name} ${value:.2f}" for name, value in summary["stakes"].items())
+            if summary["stakes"]
             else "Next stakes: base for all",
         ]
         return "\n".join(lines)
