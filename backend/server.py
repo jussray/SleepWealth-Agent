@@ -10,6 +10,11 @@ from urllib.parse import parse_qs, urlparse
 
 from approvals.queue import ApprovalQueue
 from audit.logger import AuditLogger
+from backend.external_observers import (
+    external_crypto_sources_status,
+    get_sideshift_public_catalog,
+    normalize_pump_fun_public_evidence,
+)
 from broker.base import Order
 from broker.factory import get_broker
 from engine.evaluator import ProposalEvaluator
@@ -52,11 +57,12 @@ main:before{content:"SW / PAPER 02";position:absolute;right:22px;bottom:15px;col
 h1{display:inline-block;margin:20px 0 8px;font-size:clamp(3rem,8vw,5.5rem);line-height:.88;letter-spacing:-.075em;color:var(--bone);font-weight:900}p{max-width:720px;color:var(--muted);line-height:1.58;margin:0}
 .lane-tabs{margin:22px 0 8px}.lane-tab{width:auto;padding:10px 14px;background:#0d110d;border:1px solid #424a3e;color:#b9beaa;box-shadow:none}.lane-tab[aria-pressed="true"]{background:var(--lane-accent);border-color:var(--lane-accent);color:#12170f}
 .steps{margin:14px 0 6px}.steps span{padding:7px 9px;border:1px solid #3c4439;background:#10140f;color:#b9bea9;border-radius:3px;font:750 .7rem/1 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}.steps b{display:inline-grid;place-items:center;width:18px;height:18px;margin-right:4px;background:var(--lane-shadow);color:var(--glacier);border-radius:50%}
-.discovery{margin:18px 0;padding:14px;border:1px solid #343b31;border-radius:4px 16px 4px 16px;background:#10140f}.discovery-row{display:flex;gap:8px}.discovery input{flex:1}.discovery button{width:auto}.search-results{display:grid;gap:6px;margin-top:10px}.search-result{display:flex;justify-content:space-between;gap:10px;text-align:left;background:#151a15;color:var(--bone);border:1px solid #3d4439;box-shadow:none}.search-result small{color:var(--muted)}
+.discovery,.external-observers{margin:18px 0;padding:14px;border:1px solid #343b31;border-radius:4px 16px 4px 16px;background:#10140f}.discovery-row,.observer-actions{display:flex;gap:8px}.discovery input{flex:1}.discovery button,.observer-actions button{width:auto}.search-results{display:grid;gap:6px;margin-top:10px}.search-result{display:flex;justify-content:space-between;gap:10px;text-align:left;background:#151a15;color:var(--bone);border:1px solid #3d4439;box-shadow:none}.search-result small{color:var(--muted)}
+.external-observers[hidden]{display:none}.observer-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.observer-heading h2{margin:0;color:var(--bone);font-size:1.05rem}.observer-heading .chip{margin-top:0}.source-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.source-card{padding:14px;background:var(--stone-2);border:1px solid #3a4136;border-radius:4px 16px 4px 16px}.source-card h3{margin:0 0 7px;color:var(--bone);font-size:.95rem}.source-card p{font-size:.76rem;line-height:1.45}.source-card label{margin-top:10px}.source-card input{width:100%}.source-card button{width:100%;margin-top:9px}.observer-output{min-height:92px;max-height:220px;margin-top:12px}.observer-truth{margin-top:9px;color:#c6bca8;font-size:.74rem;line-height:1.5}.observer-truth b{color:var(--glacier)}
 .markets{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin:22px 0}.market{position:relative;min-height:142px;background:var(--stone-2);border:1px solid #3a4136;border-radius:4px 18px 4px 18px;padding:18px;overflow:hidden}.market:before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--lane-accent)}.market strong{display:block;color:#d7d0bb;font-size:1rem;letter-spacing:.12em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.market .price{font-size:2rem;font-weight:900;letter-spacing:-.045em;margin-top:14px;color:var(--bone)}.market small{display:block;color:#8f9685;margin-top:8px;line-height:1.35;font-size:.72rem}.chip{padding:6px 8px;background:#10150f;border:1px solid #41483b;color:var(--lane-accent);border-radius:2px 9px 2px 9px;font:800 .61rem/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.045em;margin-top:10px}
 form{display:grid;grid-template-columns:1.1fr .9fr .9fr 1.1fr;gap:11px;margin-top:21px;padding-top:22px;border-top:1px solid #343b31}label{display:grid;gap:7px;color:#b9beaa;font:700 .72rem/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.045em}input,select,button{font:inherit;border-radius:3px 11px 3px 11px;border:1px solid #424a3e;background:#0d110d;color:var(--bone);padding:12px 13px;outline:none}input:focus,select:focus{border-color:var(--glacier);box-shadow:0 0 0 3px rgba(154,231,223,.11)}button{cursor:pointer;background:var(--lane-accent);border-color:var(--lane-accent);font-weight:950;color:#12170f;box-shadow:6px 6px 0 var(--lane-shadow);transition:transform .15s ease,box-shadow .15s ease}button:hover{transform:translate(-2px,-2px)}button:disabled{opacity:.55;cursor:wait;transform:none}
 .truth{margin-top:18px;padding:13px 14px;border-radius:3px 14px 3px 14px;background:rgba(200,120,77,.08);border:1px solid rgba(200,120,77,.35);font-size:.8rem;color:#cabda8}.truth b{color:#ef9a6b}pre{margin:16px 0 0;min-height:160px;max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#080b08;border:1px solid #31372e;border-radius:3px 16px 3px 16px;padding:16px;color:#bcd3c9;font:500 .75rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
-@media(max-width:760px){main{padding:25px;border-radius:6px 24px 6px 24px}.markets{grid-template-columns:1fr}form{grid-template-columns:1fr 1fr}.discovery-row{flex-direction:column}}
+@media(max-width:760px){main{padding:25px;border-radius:6px 24px 6px 24px}.markets,.source-grid{grid-template-columns:1fr}form{grid-template-columns:1fr 1fr}.discovery-row,.observer-actions{flex-direction:column}}
 @media(max-width:520px){body{padding:12px}main{padding:21px 19px 29px;border-radius:5px 20px 5px 20px}form{grid-template-columns:1fr}.badge{font-size:.64rem}h1{font-size:3.6rem}}
 </style>
 </head>
@@ -79,6 +85,31 @@ form{display:grid;grid-template-columns:1.1fr .9fr .9fr 1.1fr;gap:11px;margin-to
     <div id="search-results" class="search-results" aria-live="polite"></div>
   </section>
   <section id="crypto-discovery" class="discovery" hidden>Crypto stays in its own classified-observation lane. Enter a crypto pair in the paper form below.</section>
+  <section id="external-observers" class="external-observers" hidden aria-label="External crypto observers">
+    <div class="observer-heading">
+      <div><h2>External observers</h2><p>Evidence can enter the crypto lane. Authority cannot.</p></div>
+      <span class="chip">OBSERVE ONLY · $0 REAL MONEY</span>
+    </div>
+    <div class="source-grid">
+      <article class="source-card" data-source="pump.fun">
+        <h3>Pump.fun · manual public evidence</h3>
+        <p>No crawling and no automated Pump.fun request. Paste a public source URL and a symbol or mint to generate a non-authorizing evidence receipt.</p>
+        <label>Public source URL<input id="pump-source-url" placeholder="https://pump.fun/coin/..." autocomplete="off" /></label>
+        <div class="observer-actions">
+          <input id="pump-symbol" aria-label="Pump.fun symbol" placeholder="Symbol" maxlength="24" autocomplete="off" />
+          <input id="pump-mint" aria-label="Pump.fun mint" placeholder="Mint (optional)" maxlength="128" autocomplete="off" />
+        </div>
+        <button id="record-pump-evidence" type="button">Record public evidence</button>
+      </article>
+      <article class="source-card" data-source="sideshift">
+        <h3>SideShift · public coin catalog</h3>
+        <p>Public supported-coin catalog only. No account secret, quote, shift, deposit, settlement, wallet, or funding capability exists here.</p>
+        <button id="load-sideshift-catalog" type="button">Load public coin catalog</button>
+      </article>
+    </div>
+    <div class="observer-truth"><b>Boundary:</b> these are evidence sources, not brokers. They cannot create or renew trading authority.</div>
+    <pre id="external-result" class="observer-output" aria-live="polite">External observer capability status loads when the Crypto tab opens.</pre>
+  </section>
   <section id="markets" class="markets" aria-label="Featured lane markets"><div class="market"><strong>Loading markets…</strong><small>read-only observation</small></div></section>
   <form id="dry-run-form">
     <label>Symbol<input id="symbol" value="AAPL" maxlength="20" /></label>
@@ -99,6 +130,8 @@ const qtyInput=document.getElementById('qty');
 const runButton=document.getElementById('run-test');
 const stockDiscovery=document.getElementById('stock-discovery');
 const cryptoDiscovery=document.getElementById('crypto-discovery');
+const externalObservers=document.getElementById('external-observers');
+const externalResult=document.getElementById('external-result');
 const laneCopy=document.getElementById('lane-copy');
 let activeLane='stock-market';
 function clear(node){while(node.firstChild)node.removeChild(node.firstChild)}
@@ -119,15 +152,23 @@ async function loadMarkets(){
     if(!markets.children.length){markets.appendChild(card({symbol:'NONE',classification:'BLOCKED',reason:'no featured markets'}))}
   }catch(error){markets.appendChild(card({symbol:'ERROR',classification:'BLOCKED',reason:String(error)}))}
 }
+async function loadExternalSources(){
+  externalResult.textContent='Loading observation-only source capabilities…';
+  try{
+    const response=await fetch('/api/external/crypto/sources');
+    externalResult.textContent=JSON.stringify(await response.json(),null,2);
+  }catch(error){externalResult.textContent=JSON.stringify({status:'error',error:String(error),authority:'none',live_execution:false},null,2)}
+}
 function setLane(lane){
   activeLane=lane;app.dataset.lane=lane;
   document.querySelectorAll('.lane-tab').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.lane===lane)));
   const crypto=lane==='crypto';
-  stockDiscovery.hidden=crypto;cryptoDiscovery.hidden=!crypto;
+  stockDiscovery.hidden=crypto;cryptoDiscovery.hidden=!crypto;externalObservers.hidden=!crypto;
   symbolInput.value=crypto?'BTC-USD':'AAPL';
   qtyInput.value=crypto?'0.00001':'0.01';
   laneCopy.textContent=crypto?'Crypto lives in its own lane: crypto-classified read-only observation and paper-only simulation.':'Stocks live in their own lane: U.S.-listed discovery, read-only observation, paper-only simulation.';
   result.textContent=`Ready for a ${crypto?'crypto':'stock'} paper test.`;
+  if(crypto){loadExternalSources()}
   loadMarkets();
 }
 document.querySelectorAll('.lane-tab').forEach(btn=>btn.addEventListener('click',()=>setLane(btn.dataset.lane)));
@@ -145,6 +186,26 @@ document.getElementById('search-market').addEventListener('click',async()=>{
     });
     if(!out.children.length){out.textContent='No listed matches.'}
   }catch(error){out.textContent=String(error)}
+});
+document.getElementById('record-pump-evidence').addEventListener('click',async()=>{
+  const button=document.getElementById('record-pump-evidence');button.disabled=true;
+  externalResult.textContent='Normalizing local Pump.fun public evidence…';
+  try{
+    const payload={source_url:document.getElementById('pump-source-url').value.trim(),symbol:document.getElementById('pump-symbol').value.trim(),mint:document.getElementById('pump-mint').value.trim()};
+    const response=await fetch('/api/external/crypto/pumpfun/evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    externalResult.textContent=JSON.stringify(await response.json(),null,2);
+  }catch(error){externalResult.textContent=JSON.stringify({status:'error',error:String(error),authority:'none',live_execution:false},null,2)}
+  finally{button.disabled=false}
+});
+document.getElementById('load-sideshift-catalog').addEventListener('click',async()=>{
+  const button=document.getElementById('load-sideshift-catalog');button.disabled=true;
+  externalResult.textContent='Loading SideShift public coin catalog…';
+  try{
+    const response=await fetch('/api/external/crypto/sideshift/catalog');const data=await response.json();
+    if(data.catalog&&Array.isArray(data.catalog.coins)){data.catalog.coin_count=data.catalog.coins.length;data.catalog.coins=data.catalog.coins.slice(0,12)}
+    externalResult.textContent=JSON.stringify(data,null,2);
+  }catch(error){externalResult.textContent=JSON.stringify({status:'error',error:String(error),authority:'none',live_execution:false},null,2)}
+  finally{button.disabled=false}
 });
 document.getElementById('dry-run-form').addEventListener('submit',async event=>{
   event.preventDefault();runButton.disabled=true;result.textContent=`Observing ${activeLane} + running governed paper cycle…`;
@@ -478,7 +539,7 @@ async def run_paper_dry_run(
 
 
 class SleepWealthHandler(BaseHTTPRequestHandler):
-    server_version = "SleepWealthPaper/0.6"
+    server_version = "SleepWealthPaper/0.7"
 
     def _send_json(self, payload, status=HTTPStatus.OK):
         body = json.dumps(payload, default=str, sort_keys=True).encode()
@@ -498,6 +559,14 @@ class SleepWealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_json_object(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length else b"{}"
+        payload = json.loads(raw.decode())
+        if not isinstance(payload, dict):
+            raise TypeError("request body must be a JSON object")
+        return payload
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -513,9 +582,28 @@ class SleepWealthHandler(BaseHTTPRequestHandler):
                     "market_source": os.getenv("SLEEPWEALTH_MARKET_SOURCE", "yahoo-public"),
                     "lanes": rules.get("lanes", {}),
                     "market_observation": "read-only",
+                    "external_crypto_sources": "observation-only",
                     "live_execution": False,
                 }
             )
+        if path == "/api/external/crypto/sources":
+            return self._send_json(external_crypto_sources_status())
+        if path == "/api/external/crypto/sideshift/catalog":
+            try:
+                return self._send_json(get_sideshift_public_catalog())
+            except (RuntimeError, ValueError, OSError) as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "source": "sideshift",
+                        "reason": str(exc),
+                        "read_only": True,
+                        "authority": "none",
+                        "real_money": False,
+                        "live_execution": False,
+                    },
+                    HTTPStatus.BAD_GATEWAY,
+                )
         if path in {"/api/markets", "/api/stock/markets", "/api/crypto/markets"}:
             lane = CRYPTO_LANE if path == "/api/crypto/markets" else STOCK_LANE
             try:
@@ -540,14 +628,30 @@ class SleepWealthHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/external/crypto/pumpfun/evidence":
+            try:
+                payload = self._read_json_object()
+                return self._send_json(normalize_pump_fun_public_evidence(payload))
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
+                return self._send_json({"status": "invalid", "reason": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except ValueError as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "source": "pump.fun",
+                        "reason": str(exc),
+                        "read_only": True,
+                        "authority": "none",
+                        "real_money": False,
+                        "live_execution": False,
+                    },
+                    HTTPStatus.BAD_REQUEST,
+                )
+
         if path not in {"/api/dry-run", "/api/stock/dry-run", "/api/crypto/dry-run"}:
             return self._send_json({"status": "not_found"}, HTTPStatus.NOT_FOUND)
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length else b"{}"
-            payload = json.loads(raw.decode())
-            if not isinstance(payload, dict):
-                raise TypeError("request body must be a JSON object")
+            payload = self._read_json_object()
             if path == "/api/crypto/dry-run":
                 lane = CRYPTO_LANE
             elif path == "/api/stock/dry-run":
@@ -589,7 +693,7 @@ def serve(host="127.0.0.1", port=8765):
     print(
         "Market lanes: stock-market + crypto | "
         f"observation={os.getenv('SLEEPWEALTH_MARKET_SOURCE', 'yahoo-public')} "
-        "| live execution=disabled | broker=mock"
+        "| external crypto=observation-only | live execution=disabled | broker=mock"
     )
     try:
         server.serve_forever()

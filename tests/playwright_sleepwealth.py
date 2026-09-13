@@ -83,6 +83,22 @@ def assert_paper_receipt(page, lane):
     expect(result).to_contain_text("paper simulation only; no real money moved")
 
 
+def assert_external_observer_surface(page):
+    panel = page.get_by_label("External crypto observers")
+    expect(panel).to_be_visible()
+    expect(panel.get_by_role("heading", name="External observers")).to_be_visible()
+    expect(panel).to_contain_text("Pump.fun · manual public evidence")
+    expect(panel).to_contain_text("SideShift · public coin catalog")
+    expect(panel).to_contain_text("OBSERVE ONLY · $0 REAL MONEY")
+    expect(panel).to_contain_text("these are evidence sources, not brokers")
+    expect(panel.locator("#external-result")).to_contain_text('"authority": "none"')
+    expect(panel.locator("#external-result")).to_contain_text('"live_execution": false')
+    assert page.get_by_role("button", name="Connect wallet").count() == 0
+    assert page.get_by_role("button", name="Swap").count() == 0
+    assert page.get_by_role("button", name="Trade live").count() == 0
+    assert page.get_by_role("button", name="Create shift").count() == 0
+
+
 def prove(context, prefix):
     page = context.new_page()
     stage = "open"
@@ -109,6 +125,7 @@ def prove(context, prefix):
         expect(stock_tab).to_have_attribute("aria-pressed", "true")
         expect(crypto_tab).to_have_attribute("aria-pressed", "false")
         expect(page.get_by_label("Search U.S. listed market")).to_be_visible()
+        expect(page.get_by_label("External crypto observers")).to_be_hidden()
         stage = "stock-cards"
         assert_cards(page, ("AAPL", "MSFT", "VTI"), "stock-market")
 
@@ -127,6 +144,19 @@ def prove(context, prefix):
         expect(page.get_by_label("Search U.S. listed market")).to_be_hidden()
         expect(page.locator("#symbol")).to_have_value("BTC-USD")
         assert_cards(page, ("BTC-USD", "ETH-USD", "SOL-USD"), "crypto")
+        assert_external_observer_surface(page)
+
+        stage = "pump-evidence"
+        page.locator("#pump-source-url").fill("https://pump.fun/coin/example")
+        page.get_by_label("Pump.fun symbol").fill("EXAMPLE")
+        page.get_by_role("button", name="Record public evidence").click()
+        external_result = page.locator("#external-result")
+        expect(external_result).to_contain_text('"status": "observed"')
+        expect(external_result).to_contain_text('"source": "pump-fun-public-evidence"')
+        expect(external_result).to_contain_text('"network_request_performed": false')
+        expect(external_result).to_contain_text('"authority": "none"')
+        expect(external_result).to_contain_text('"live_execution": false')
+        expect(external_result).to_contain_text('"continuity_cookie": "sw-pump-observation-v1:')
 
         stage = "crypto-submit"
         page.get_by_role("button", name="Observe + run paper test").click()
@@ -185,6 +215,8 @@ def write_proof_manifest():
         claims=(
             "stock-lane UI runtime rendered",
             "crypto-lane UI runtime rendered",
+            "external crypto observer ceiling rendered",
+            "Pump.fun manual public evidence normalized without network authority",
             "paper execution paths exercised",
             "read-only market observation semantics displayed",
         ),
@@ -192,6 +224,9 @@ def write_proof_manifest():
             "live execution authority",
             "external broker connectivity",
             "real-money movement",
+            "Pump.fun automated network access",
+            "SideShift quote or shift authority",
+            "SideShift upstream availability",
         ),
         artifacts=artifacts,
     )
@@ -245,6 +280,7 @@ def write_proof_manifest():
         "execution_mode": "practice",
         "live_execution": False,
         "market_observation": "read-only",
+        "external_crypto_sources": "observation-only",
         "authority": "non-authorizing evidence",
         "claim_scope": list(evidence.claims),
         "does_not_prove": list(evidence.does_not_prove),
