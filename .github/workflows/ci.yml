@@ -33,41 +33,78 @@ jobs:
           SLEEPWEALTH_MARKET_SOURCE: mock
         run: pytest tests/ -v --tb=short
 
-      - name: Paper smoke test
-        run: python -m cli.main run --mode paper --broker mock --symbol AAPL --qty 0.04 --side buy --auto-approve
+      - name: Stock paper smoke test
+        env:
+          SLEEPWEALTH_MARKET_SOURCE: mock
+        run: python -m cli.main run --mode paper --broker mock --lane stock-market --symbol AAPL --qty 0.04 --side buy --auto-approve
 
-      - name: Real read-only market data probe
+      - name: Crypto paper smoke test
+        env:
+          SLEEPWEALTH_MARKET_SOURCE: mock
+        run: python -m cli.main run --mode paper --broker mock --lane crypto --symbol BTC-USD --qty 0.01 --side buy --auto-approve
+
+      - name: Real read-only stock data probe
         env:
           SLEEPWEALTH_MARKET_SOURCE: yahoo-public
         run: |
           python - <<'PY'
           import asyncio
           import json
-          from backend.server import observe_approved_markets
+          from backend.server import observe_lane_markets
+          from market import STOCK_LANE
 
-          result = asyncio.run(observe_approved_markets())
+          result = asyncio.run(observe_lane_markets(STOCK_LANE))
           assert result["status"] == "ok", result
-          assert result["approved_symbols"] == ["AAPL", "MSFT", "VTI"]
+          assert result["lane"] == STOCK_LANE
           assert result["failed_symbols"] == []
+          assert result["featured_symbols"] == ["AAPL", "MSFT", "VTI"]
+          assert all(row["lane"] == STOCK_LANE for row in result["markets"])
+          assert all(row["crypto_native"] is False for row in result["markets"])
           assert all(row["source"] == "yahoo-public-chart" for row in result["markets"])
-          assert all(row["source_classification"] == "external-public-delayed" for row in result["markets"])
           assert all(row["price"] > 0 for row in result["markets"])
-          assert all(row["freshness"] == "fresh" for row in result["markets"])
-          assert all(len(row["fingerprint"]) == 64 for row in result["markets"])
-          assert all(row["continuity_cookie"].startswith("sw-market-v1:") for row in result["markets"])
-          print(json.dumps({
-              "market_source": result["market_source"],
-              "markets": [
-                  {
-                      "symbol": row["symbol"],
-                      "price": row["price"],
-                      "observed_at": row["observed_at"],
-                      "fingerprint": row["fingerprint"],
-                  }
-                  for row in result["markets"]
-              ],
-              "live_execution": result["live_execution"],
-          }, indent=2))
+          assert result["live_execution"] is False
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Real read-only crypto data probe
+        env:
+          SLEEPWEALTH_MARKET_SOURCE: yahoo-public
+        run: |
+          python - <<'PY'
+          import asyncio
+          import json
+          from backend.server import observe_lane_markets
+          from market import CRYPTO_LANE
+
+          result = asyncio.run(observe_lane_markets(CRYPTO_LANE))
+          assert result["status"] == "ok", result
+          assert result["lane"] == CRYPTO_LANE
+          assert result["failed_symbols"] == []
+          assert result["featured_symbols"] == ["BTC-USD", "ETH-USD", "SOL-USD"]
+          assert all(row["lane"] == CRYPTO_LANE for row in result["markets"])
+          assert all(row["crypto_native"] is True for row in result["markets"])
+          assert all(row["instrument_type"] == "CRYPTOCURRENCY" for row in result["markets"])
+          assert all(row["source"] == "yahoo-public-chart" for row in result["markets"])
+          assert all(row["price"] > 0 for row in result["markets"])
+          assert result["live_execution"] is False
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Real U.S. listed stock directory probe
+        run: |
+          python - <<'PY'
+          import asyncio
+          import json
+          from backend.server import search_stock_universe
+
+          result = asyncio.run(search_stock_universe("AAPL", 10))
+          assert result["status"] == "ok", result
+          assert result["lane"] == "stock-market"
+          assert result["source"] == "nasdaq-trader-symbol-directory"
+          assert any(row["symbol"] == "AAPL" for row in result["results"]), result
+          assert all(row["crypto_native"] is False for row in result["results"])
+          assert result["live_execution"] is False
+          print(json.dumps(result, indent=2))
           PY
 
       - name: Install Playwright Chromium
