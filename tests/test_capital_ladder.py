@@ -160,3 +160,52 @@ def test_slow_or_weak_cycles_do_not_promote(cycle):
     assert result["status"] == "hold"
     assert result["qualified"] is False
     assert result["suggested_next_limit"] == result["effective_limit"]
+
+
+def test_history_requires_three_consecutive_qualified_cycles():
+    win = FlipCycle(10.0, 14.0, fees=1.0, days_held=3)
+    result = CapitalLadder(rules()).assess_history([win, win, win])
+
+    assert result["promotion_ready"] is True
+    assert result["current_qualified_streak"] == 3
+    assert result["effective_limit"] == 20.0
+    assert result["suggested_next_limit"] == 30.0
+    assert result["can_auto_increase"] is False
+
+
+def test_weak_profitable_cycle_breaks_history_streak():
+    win = FlipCycle(10.0, 14.0, fees=1.0, days_held=3)
+    weak = FlipCycle(10.0, 11.0, days_held=3)
+    result = CapitalLadder(rules()).assess_history([win, weak, win])
+
+    assert result["promotion_ready"] is False
+    assert result["current_qualified_streak"] == 1
+    assert result["failed_cycles"] == 1
+    assert result["failure_rate_pct"] == 33.33
+    assert result["win_rate_pct"] == 100.0
+    assert result["suggested_next_limit"] == 20.0
+
+
+def test_history_reports_velocity_profit_and_empty_state():
+    policy = CapitalLadder(rules())
+    empty = policy.assess_history([])
+
+    assert empty["cycles"] == 0
+    assert empty["capital_velocity_per_day"] == 0.0
+    assert empty["latest_status"] == "no_data"
+
+    result = policy.assess_history(
+        [
+            FlipCycle(10.0, 14.0, fees=1.0, days_held=2),
+            FlipCycle(5.0, 8.0, fees=1.0, days_held=1),
+        ]
+    )
+
+    assert result["total_deployed"] == 17.0
+    assert result["total_net_profit"] == 5.0
+    assert result["capital_velocity_per_day"] == 5.67
+
+
+def test_history_rejects_unvalidated_cycle_evidence():
+    with pytest.raises(TypeError, match="FlipCycle"):
+        CapitalLadder(rules()).assess_history([{"buy_cost": 1.0}])

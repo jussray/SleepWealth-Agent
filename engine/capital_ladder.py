@@ -174,3 +174,75 @@ class CapitalLadder:
             "paper_only": True,
             "can_auto_increase": False,
         }
+
+    def assess_history(self, cycles: list[FlipCycle]) -> dict:
+        """Recompute ladder proof from cycle evidence and return compounding analytics.
+
+        Historical proof is derived from the supplied cycles in order. A non-qualifying
+        cycle breaks the consecutive-win streak; a pause/block status also stops promotion.
+        No result mutates the configured ceiling.
+        """
+        if not isinstance(cycles, list):
+            raise TypeError("cycles must be a list of FlipCycle values")
+        if any(not isinstance(cycle, FlipCycle) for cycle in cycles):
+            raise TypeError("every cycle must be a FlipCycle")
+
+        streak = 0
+        qualified_count = 0
+        profitable_count = 0
+        failed_count = 0
+        total_cost = 0.0
+        total_profit = 0.0
+        total_days = 0
+        assessments: list[dict] = []
+
+        for cycle in cycles:
+            result = self.assess(cycle, prior_qualified_wins=streak)
+            assessments.append(result)
+            total_cost += cycle.total_cost
+            total_profit += cycle.net_profit
+            total_days += cycle.days_held
+            profitable_count += int(cycle.net_profit > 0)
+
+            if result["qualified"]:
+                qualified_count += 1
+                streak += 1
+            else:
+                failed_count += 1
+                streak = 0
+
+        cycle_count = len(cycles)
+        failure_rate_pct = (failed_count / cycle_count * 100.0) if cycle_count else 0.0
+        win_rate_pct = (profitable_count / cycle_count * 100.0) if cycle_count else 0.0
+        capital_velocity_per_day = total_cost / max(total_days, 1) if cycle_count else 0.0
+        latest = assessments[-1] if assessments else None
+
+        promotion_ready = bool(
+            latest
+            and latest["status"] == "promotion_ready"
+            and streak >= self.promotion_wins_required
+        )
+        suggested_next_limit = (
+            latest["suggested_next_limit"] if promotion_ready else self.current_limit
+        )
+
+        return {
+            "cycles": cycle_count,
+            "qualified_cycles": qualified_count,
+            "profitable_cycles": profitable_count,
+            "failed_cycles": failed_count,
+            "current_qualified_streak": streak,
+            "failure_rate_pct": round(failure_rate_pct, 2),
+            "win_rate_pct": round(win_rate_pct, 2),
+            "total_deployed": round(total_cost, 2),
+            "total_net_profit": round(total_profit, 2),
+            "capital_velocity_per_day": round(capital_velocity_per_day, 2),
+            "promotion_ready": promotion_ready,
+            "effective_limit": round(self.current_limit, 2),
+            "suggested_next_limit": round(float(suggested_next_limit), 2),
+            "authority": "advisory",
+            "paper_only": True,
+            "can_auto_increase": False,
+            "latest_status": latest["status"] if latest else "no_data",
+            "assessments": assessments,
+        }

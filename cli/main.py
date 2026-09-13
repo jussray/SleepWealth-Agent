@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 import typer
 
@@ -161,13 +162,8 @@ def ladder(
         help="shipping or other simulated cycle costs",
     ),
     days_held: int = typer.Option(0, min=0, help="days capital was tied up"),
-    prior_qualified_wins: int = typer.Option(
-        0,
-        min=0,
-        help="already verified consecutive qualifying paper cycles",
-    ),
 ):
-    """Score one paper flip and report whether the capital ladder earned a review."""
+    """Score one paper flip. Historical promotion proof must come from cycle evidence."""
     rules = load_rules()
     ok, errors = RulesValidator().validate(rules)
     if not ok:
@@ -175,17 +171,49 @@ def ladder(
             typer.echo(f"  - {err}")
         raise typer.Exit(1)
 
-    policy = CapitalLadder(rules)
-    result = policy.assess(
+    result = CapitalLadder(rules).assess(
         FlipCycle(
             buy_cost=buy_cost,
             sale_proceeds=sale_proceeds,
             fees=fees,
             other_costs=other_costs,
             days_held=days_held,
-        ),
-        prior_qualified_wins=prior_qualified_wins,
+        )
     )
+    typer.echo(json.dumps(result, indent=2, sort_keys=True))
+
+
+@app.command("ladder-dashboard")
+def ladder_dashboard(
+    cycles_file: Path = typer.Option(
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="JSON file containing an ordered list of simulated flip cycles",
+    ),
+):
+    """Recompute streaks and compounding metrics from paper cycle evidence."""
+    rules = load_rules()
+    ok, errors = RulesValidator().validate(rules)
+    if not ok:
+        for err in errors:
+            typer.echo(f"  - {err}")
+        raise typer.Exit(1)
+
+    try:
+        raw = json.loads(cycles_file.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            raise ValueError("cycle evidence must be a JSON list")
+        cycles = [FlipCycle(**item) if isinstance(item, dict) else None for item in raw]
+        if any(cycle is None for cycle in cycles):
+            raise ValueError("every cycle must be a JSON object")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        typer.echo(f"[BLOCKED] invalid cycle evidence: {exc}")
+        raise typer.Exit(1)
+
+    result = CapitalLadder(rules).assess_history(cycles)
     typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
