@@ -8,7 +8,6 @@
 
 import argparse
 import asyncio
-import json
 
 from audit.logger import AuditLogger
 from gate.live_gate import LiveGate
@@ -43,8 +42,11 @@ async def cmd_series(args):
     harness = build(rules, args.audit)
     for n in range(args.races):
         seed = None if args.seed is None else args.seed + n
-        result = await harness.run_race(duration=args.duration, seed=seed,
-                                        verbose=not args.quiet)
+        result = await harness.run_race(
+            duration=args.duration,
+            seed=seed,
+            verbose=not args.quiet,
+        )
         patches = harness.cross_learn(result, verbose=not args.quiet)
         if args.quiet:
             print(result.render())

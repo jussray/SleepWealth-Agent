@@ -15,7 +15,6 @@ including /futureyou, which is enforced at construction in race.modes.
 import asyncio
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from audit.logger import AuditLogger
@@ -39,12 +38,7 @@ def parse_duration(label: str) -> int:
 
 
 class PriceFeed:
-    """Seeded random walk. SIMULATION ONLY — contains no alpha and no real data.
-
-    Exists so races diverge and the harness can be exercised end to end. Swap
-    for a broker-backed feed via `BrokerFeed` before any number here means
-    anything.
-    """
+    """Seeded random walk. SIMULATION ONLY — contains no alpha and no real data."""
 
     def __init__(self, symbols: List[str], seed: Optional[int] = None,
                  start_price: float = 100.0):
@@ -53,7 +47,6 @@ class PriceFeed:
         self.prices: Dict[str, float] = {s: start_price for s in symbols}
         self.prev: Dict[str, float] = dict(self.prices)
         self.history: Dict[str, List[float]] = {s: [start_price] for s in symbols}
-        # Each symbol gets its own character so ranking is non-trivial.
         self.vol: Dict[str, float] = {
             s: self.rng.uniform(0.15, 1.4) for s in symbols
         }
@@ -77,7 +70,7 @@ class PriceFeed:
 
 
 class BrokerFeed:
-    """Live-ish feed backed by a BaseBroker. Use with mock/alpaca/ibkr."""
+    """Read prices from a broker-shaped observation interface for simulation."""
 
     def __init__(self, broker, symbols: List[str]):
         self.broker = broker
@@ -103,7 +96,7 @@ class BrokerFeed:
 
 @dataclass
 class _Sandbox:
-    """Each engine races its own stake. No shared account, no interference."""
+    """Each engine races its own simulated stake."""
     state: EngineState
     peak: float
     trough: float
@@ -153,7 +146,7 @@ class _Sandbox:
 
 
 class RaceHarness:
-    """Runs one race between two engines, then settles the ledger."""
+    """Runs one simulated race between two engines, then settles the ledger."""
 
     def __init__(
         self,
@@ -244,7 +237,6 @@ class RaceHarness:
             if self.live_clock:
                 await asyncio.sleep(self._tick_seconds(duration, ticks))
 
-        # Liquidate to a comparable number.
         final_snapshot = snapshot
         scores = []
         for eng in self.engines:
@@ -306,13 +298,8 @@ class RaceHarness:
         return seconds / max(ticks, 1)
 
     def cross_learn(self, result: RaceResult, verbose: bool = True) -> Dict[str, List[str]]:
-        """The whole point: the loser reads the winner's MOVES, not the score.
-
-        Runs both directions — the winner also reads the loser, because a win
-        can be luck and the loser's process may still contain the better idea.
-        """
+        """Learn from the opponent's simulated moves, not the score."""
         patches: Dict[str, List[str]] = {}
-        by_name = {e.name: e for e in self.engines}
         transcript = self.transcripts.get(result.race_id, {})
 
         for eng in self.engines:
@@ -324,6 +311,6 @@ class RaceHarness:
             print(f"\n{'-' * 64}\nCROSS-LEARNING (moves, not outcomes)")
             for name, applied in patches.items():
                 print(f"\n  {name} patched from {('Gates' if name == 'Musk' else 'Musk')}:")
-                for p in applied:
-                    print(f"    • {p}")
+                for patch in applied:
+                    print(f"    • {patch}")
         return patches

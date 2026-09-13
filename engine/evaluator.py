@@ -26,8 +26,6 @@ class ProposalEvaluator:
             if self.approved_symbols and order.symbol not in self.approved_symbols:
                 reasons.append(f"{order.symbol} not in approved_symbols")
         elif self.symbol_scope == "observable-market":
-            # The backend must obtain a valid read-only market observation before this
-            # evaluator is called. Observation expands paper eligibility, not authority.
             pass
         else:
             reasons.append(f"unsupported symbol_scope {self.symbol_scope}")
@@ -53,5 +51,9 @@ class ProposalEvaluator:
             "estimated_cost": cost,
             "observed_price": price,
             "symbol_scope": self.symbol_scope,
+            "rules_version": self.rules.get("version"),
+            "ceiling": self.ceiling,
+            "max_position_size": self.max_position_size,
+            "floor_cash": self.floor_cash,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }

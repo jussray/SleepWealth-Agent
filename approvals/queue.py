@@ -1,3 +1,5 @@
+import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -13,6 +15,21 @@ class ApprovalStatus(str, Enum):
     EXECUTED = "executed"
 
 
+def approval_fingerprint(order: Order, evaluation: dict) -> str:
+    """Bind approval to the exact simulated intent and reviewed evidence."""
+    payload = {
+        "order": {
+            "symbol": order.symbol,
+            "qty": order.qty,
+            "side": order.side,
+            "asset_class": order.asset_class,
+        },
+        "evaluation": evaluation,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @dataclass
 class ApprovalRequest:
     proposal_id: str
@@ -22,12 +39,13 @@ class ApprovalRequest:
     reason: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     approved_at: Optional[datetime] = None
+    approved_fingerprint: Optional[str] = None
     executed_at: Optional[datetime] = None
     order_id: Optional[str] = None
 
 
 class ApprovalQueue:
-    """Human-in-the-loop gate. Nothing executes without passing through here."""
+    """Human-in-the-loop gate for simulated actions."""
 
     def __init__(self):
         self.queue: List[ApprovalRequest] = []
@@ -40,33 +58,43 @@ class ApprovalQueue:
         return proposal_id
 
     def get(self, proposal_id: str) -> Optional[ApprovalRequest]:
-        return next((r for r in self.queue if r.proposal_id == proposal_id), None)
+        return next((request for request in self.queue if request.proposal_id == proposal_id), None)
 
     def get_pending(self) -> List[ApprovalRequest]:
-        return [r for r in self.queue if r.status is ApprovalStatus.PENDING]
+        return [request for request in self.queue if request.status is ApprovalStatus.PENDING]
 
     def approve(self, proposal_id: str, reason: str | None = None) -> bool:
-        req = self.get(proposal_id)
-        if not req or req.status is not ApprovalStatus.PENDING:
+        request = self.get(proposal_id)
+        if not request or request.status is not ApprovalStatus.PENDING:
             return False
-        req.status = ApprovalStatus.APPROVED
-        req.approved_at = datetime.now(timezone.utc)
-        req.reason = reason
+        request.status = ApprovalStatus.APPROVED
+        request.approved_at = datetime.now(timezone.utc)
+        request.approved_fingerprint = approval_fingerprint(request.order, request.evaluation)
+        request.reason = reason
         return True
 
-    def reject(self, proposal_id: str, reason: str) -> bool:
-        req = self.get(proposal_id)
-        if not req:
+    def approval_is_intact(self, proposal_id: str) -> bool:
+        request = self.get(proposal_id)
+        if not request or not request.approved_fingerprint:
             return False
-        req.status = ApprovalStatus.REJECTED
-        req.reason = reason
+        return request.approved_fingerprint == approval_fingerprint(
+            request.order,
+            request.evaluation,
+        )
+
+    def reject(self, proposal_id: str, reason: str) -> bool:
+        request = self.get(proposal_id)
+        if not request or request.status is not ApprovalStatus.PENDING:
+            return False
+        request.status = ApprovalStatus.REJECTED
+        request.reason = reason
         return True
 
     def mark_executed(self, proposal_id: str, order_id: str | None = None) -> bool:
-        req = self.get(proposal_id)
-        if not req:
+        request = self.get(proposal_id)
+        if not request or request.status is not ApprovalStatus.APPROVED:
             return False
-        req.status = ApprovalStatus.EXECUTED
-        req.executed_at = datetime.now(timezone.utc)
-        req.order_id = order_id
+        request.status = ApprovalStatus.EXECUTED
+        request.executed_at = datetime.now(timezone.utc)
+        request.order_id = order_id
         return True
