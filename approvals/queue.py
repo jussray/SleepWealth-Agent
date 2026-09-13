@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -18,6 +19,7 @@ except ImportError:  # pragma: no cover - persistent mode fails closed below
 
 
 STATE_VERSION = 1
+STATE_SEAL_ALGORITHM = "sha256"
 _RUNTIME_DEFAULT = object()
 _PROCESS_NONCE = uuid.uuid4().hex
 _DEFAULT_RUNTIME_STATE_PATH = ".sleepwealth/paper-approvals.json"
@@ -68,6 +70,15 @@ def _json_copy(value):
     return json.loads(json.dumps(value, default=str))
 
 
+def _canonical_state_payload(payload: dict) -> bytes:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return canonical.encode("utf-8")
+
+
+def _state_seal(payload: dict) -> str:
+    return hashlib.sha256(_canonical_state_payload(payload)).hexdigest()
+
+
 @dataclass
 class ApprovalRequest:
     proposal_id: str
@@ -90,10 +101,12 @@ class ApprovalQueue:
 
     Omitted state_path uses Sleep Wealth's file-backed runtime default. Pass
     state_path=None explicitly only for isolated in-memory tests or library use.
-    File-backed approval and in-flight execution are session-bound so process
-    restarts, execs, and pre-fork worker boundaries fail closed instead of
-    replaying unfinished work. Queue instances inside one OS process share the
-    same session marker.
+    File-backed approval state is atomically persisted and self-sealed. Approval and
+    in-flight execution are session-bound so process restarts, execs, and pre-fork
+    worker boundaries fail closed instead of replaying unfinished work. Queue
+    instances inside one OS process share the same session marker. The SHA-256 seal
+    detects accidental corruption or unsophisticated local edits; it is not an
+    authentication secret and does not make local storage tamper-proof.
     """
 
     def __init__(self, state_path=_RUNTIME_DEFAULT, session_id: str | None = None):
@@ -184,10 +197,24 @@ class ApprovalQueue:
             self._counter = 0
             return
         try:
-            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            stored = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"approval state is unreadable: {exc}") from exc
-        if not isinstance(payload, dict) or payload.get("version") != STATE_VERSION:
+        if not isinstance(stored, dict):
+            raise RuntimeError("approval state shape is invalid")
+        seal = stored.get("seal")
+        if not isinstance(seal, dict):
+            raise RuntimeError("approval state seal is missing")
+        if seal.get("algorithm") != STATE_SEAL_ALGORITHM:
+            raise RuntimeError("approval state seal algorithm is missing or unsupported")
+        expected = seal.get("digest")
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise RuntimeError("approval state seal digest is invalid")
+        payload = {key: value for key, value in stored.items() if key != "seal"}
+        actual = _state_seal(payload)
+        if not hmac.compare_digest(expected, actual):
+            raise RuntimeError("approval state integrity check failed")
+        if payload.get("version") != STATE_VERSION:
             raise RuntimeError("approval state version is missing or unsupported")
         requests = payload.get("requests")
         counter = payload.get("counter")
@@ -209,8 +236,15 @@ class ApprovalQueue:
             "counter": self._counter,
             "requests": [self._serialize_request(request) for request in self.queue],
         }
+        stored = {
+            **payload,
+            "seal": {
+                "algorithm": STATE_SEAL_ALGORITHM,
+                "digest": _state_seal(payload),
+            },
+        }
         encoded = (
-            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+            json.dumps(stored, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
         temp_path = self.state_path.with_name(
             f".{self.state_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
