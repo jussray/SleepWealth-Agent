@@ -5,8 +5,7 @@ from broker import CryptoSandboxBroker, Order, get_broker
 
 @pytest.mark.asyncio
 async def test_crypto_sandbox_is_paper_only_and_emits_receipt_markers():
-    broker = get_broker("crypto-sandbox")
-    assert isinstance(broker, CryptoSandboxBroker)
+    broker = CryptoSandboxBroker()
     assert broker.is_paper_only() is True
     assert await broker.connect() is True
 
@@ -29,7 +28,7 @@ async def test_crypto_sandbox_is_paper_only_and_emits_receipt_markers():
 
 @pytest.mark.asyncio
 async def test_crypto_sandbox_rejects_non_crypto_orders():
-    broker = get_broker("crypto-sandbox")
+    broker = CryptoSandboxBroker()
     await broker.connect()
 
     result = await broker.submit_order(
@@ -40,9 +39,12 @@ async def test_crypto_sandbox_rejects_non_crypto_orders():
     assert "crypto" in result["reason"]
 
 
-def test_crypto_sandbox_cannot_accept_credentials_or_live_mode():
-    with pytest.raises(ValueError, match="credentials are not accepted"):
-        get_broker("crypto-sandbox", credentials={"secret": "not-used"})
+def test_crypto_sandbox_is_not_public_broker_selection():
+    with pytest.raises(ValueError, match="External broker adapters are disabled"):
+        get_broker("crypto-sandbox")
 
     with pytest.raises(ValueError, match="Live broker execution is disabled"):
-        get_broker("crypto-sandbox", paper_only=False)
+        get_broker("mock", paper_only=False)
+
+    with pytest.raises(ValueError, match="credentials are not accepted"):
+        get_broker("mock", credentials={"secret": "not-used"})
