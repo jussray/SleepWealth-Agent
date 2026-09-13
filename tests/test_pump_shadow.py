@@ -20,9 +20,12 @@ def snapshot(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_live_observation_is_read_only_and_non_authorizing():
-    observation = await PumpShadowBridge.observe(snapshot())
+async def test_live_observation_is_read_only_non_authorizing_and_mint_bound():
+    source = snapshot()
+    observation = await PumpShadowBridge.observe(source)
+
     assert observation.symbol == "MOM8"
+    assert observation.mint == source["mint"]
     assert observation.price == 0.0125
     assert observation.lane == "crypto"
     assert observation.crypto_native is True
@@ -30,23 +33,26 @@ async def test_live_observation_is_read_only_and_non_authorizing():
     assert observation.read_only is True
     assert observation.authority == "none"
     assert observation.fingerprint
+    assert observation.market_fingerprint
+    assert observation.fingerprint != observation.market_fingerprint
 
 
 @pytest.mark.asyncio
-async def test_exact_live_price_mirrors_into_existing_crypto_sandbox():
-    live = await PumpShadowBridge.observe(snapshot(price=0.025))
+async def test_exact_live_price_and_bound_mint_mirror_into_existing_crypto_sandbox():
+    source = snapshot(price=0.025)
+    live = await PumpShadowBridge.observe(source)
     sandbox = CryptoSandboxBroker(initial_cash=10.0)
     await sandbox.connect()
-    receipt = PumpShadowBridge.mirror_to_practice(
-        live,
-        mint="PumpMint111111111111111111111111111111111",
-        sandbox=sandbox,
-    )
+
+    receipt = PumpShadowBridge.mirror_to_practice(live, sandbox=sandbox)
     fill = await sandbox.submit_order(Order("MOM8", 4, "buy", asset_class="crypto"))
+
     assert receipt.live_mode == "live"
     assert receipt.practice_mode == "practice"
+    assert receipt.mint == source["mint"]
     assert receipt.mirrored_price == live.price
     assert receipt.observation_fingerprint == live.fingerprint
+    assert receipt.market_fingerprint == live.market_fingerprint
     assert receipt.real_money is False
     assert receipt.wallet_access is False
     assert receipt.transaction_signing is False
@@ -55,6 +61,15 @@ async def test_exact_live_price_mirrors_into_existing_crypto_sandbox():
     assert fill["filled_price"] == live.price
     assert fill["real_money"] is False
     assert fill["fill_classification"] == "SIMULATED_CRYPTO_WALLET_FILL"
+
+
+@pytest.mark.asyncio
+async def test_same_market_snapshot_with_different_mint_has_different_pump_fingerprint():
+    first = await PumpShadowBridge.observe(snapshot(mint="PumpMintA"))
+    second = await PumpShadowBridge.observe(snapshot(mint="PumpMintB"))
+
+    assert first.market_fingerprint == second.market_fingerprint
+    assert first.fingerprint != second.fingerprint
 
 
 @pytest.mark.asyncio
@@ -78,21 +93,6 @@ async def test_website_scrape_classification_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_snapshot_identity_and_mint_are_preserved():
-    source = snapshot(symbol="MOM8")
-    live = await PumpShadowBridge.observe(source)
-    sandbox = CryptoSandboxBroker(initial_cash=10.0)
-    await sandbox.connect()
-    receipt = PumpShadowBridge.mirror_to_practice(live, mint=source["mint"], sandbox=sandbox)
-    assert receipt.symbol == "MOM8"
-    assert receipt.mint == source["mint"]
-    assert receipt.mirror_fingerprint
-
-
-@pytest.mark.asyncio
-async def test_empty_mint_fails_closed():
-    live = await PumpShadowBridge.observe(snapshot())
-    sandbox = CryptoSandboxBroker(initial_cash=10.0)
-    await sandbox.connect()
-    with pytest.raises(ValueError, match="mint must not be empty"):
-        PumpShadowBridge.mirror_to_practice(live, mint=" ", sandbox=sandbox)
+async def test_empty_mint_fails_closed_before_observation():
+    with pytest.raises(ValueError, match="identity fields must not be empty"):
+        await PumpShadowBridge.observe(snapshot(mint=" "))
