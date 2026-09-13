@@ -162,10 +162,32 @@ jobs:
           cat /tmp/mom8-preview.log
           exit 1
 
+      - name: Start crypto sandbox wallet lab
+        env:
+          SLEEPWEALTH_CRYPTO_SANDBOX_CASH: "100"
+        run: |
+          python -m backend.crypto_sandbox_server --host 127.0.0.1 --port 8767 >/tmp/crypto-sandbox.log 2>&1 &
+          echo $! >/tmp/crypto-sandbox.pid
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8767/health >/tmp/crypto-sandbox-health.json; then
+              cat /tmp/crypto-sandbox-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/crypto-sandbox.log
+          exit 1
+
       - name: Playwright Sleep Wealth proof
         env:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python tests/playwright_sleepwealth.py
+
+      - name: Playwright crypto sandbox wallet proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CRYPTO_SANDBOX_BASE_URL: http://127.0.0.1:8767/
+        run: python tests/playwright_crypto_sandbox.py
 
       - name: Playwright MOM8 public preview proof
         env:
