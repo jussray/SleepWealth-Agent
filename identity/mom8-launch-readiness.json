@@ -1,0 +1,48 @@
+{
+  "version": "1.0.0",
+  "identity_ref": "identity/mom8-public-token.json",
+  "public_name": "MOM OF 8",
+  "ticker": "MOM8",
+  "status": "prelaunch-brand-readiness",
+  "purpose": "public identity, story, creative direction, and provenance preparation only",
+  "public_copy": {
+    "one_liner": "MOM OF 8 is a bold public identity built around family-sized ambition, persistence, and building in public.",
+    "short_description": "MOM OF 8 / MOM8 is the public token identity for a founder story centered on building, family, resilience, and visible proof of work.",
+    "voice": ["direct", "energetic", "human", "proof-first"],
+    "avoid_claims": [
+      "guaranteed returns",
+      "price appreciation promises",
+      "investment advice",
+      "scarcity claims not independently verified",
+      "fake endorsements",
+      "fabricated community metrics"
+    ]
+  },
+  "visual_direction": {
+    "concept": "eight-point family constellation around a strong MOM8 wordmark",
+    "traits": ["recognizable at avatar size", "simple silhouette", "high contrast", "not derivative of another token brand"],
+    "required_text": ["MOM8"],
+    "optional_text": ["MOM OF 8"]
+  },
+  "provenance": {
+    "identity_fingerprint": "MOM-OF-8::MOM8::public-token-branding::v1",
+    "readiness_fingerprint": "MOM8::prelaunch-brand-readiness::v1",
+    "proof_cookie": "mom8-prelaunch-brand-readiness-v1",
+    "non_secret": true,
+    "creates_authority": false,
+    "renews_authority": false
+  },
+  "readiness": {
+    "identity_canonical": true,
+    "public_copy_prepared": true,
+    "visual_direction_prepared": true,
+    "provenance_markers_prepared": true,
+    "financial_promises_allowed": false,
+    "wallet_connected": false,
+    "mint_authorized": false,
+    "launch_authorized": false,
+    "trade_authorized": false,
+    "spend_authorized": false,
+    "transfer_authorized": false
+  }
+}
