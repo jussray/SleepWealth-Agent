@@ -7,7 +7,7 @@ def test_render_blueprint_stays_paper_lab_only():
     assert "name: sleepwealth-paper-lab" in blueprint
     assert "buildCommand: pip install -e ." in blueprint
     assert "ibkr-readonly" not in blueprint
-    assert "startCommand: python -m backend.server" in blueprint
+    assert "startCommand: python -m backend.runtime_server" in blueprint
     assert "healthCheckPath: /health" in blueprint
     assert "autoDeployTrigger: checksPass" in blueprint
 
