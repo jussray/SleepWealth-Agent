@@ -80,31 +80,61 @@ class ExecutionManager:
                 },
             )
 
+        if not self.approval_queue.begin_execution(proposal_id):
+            return await self._block(
+                proposal_id,
+                "approval is no longer executable; restart/session state requires a new proposal",
+            )
+
+        await self.audit_logger.log({
+            "event": "execution_started",
+            "proposal_id": proposal_id,
+            "order": self._order_payload(proposal.order),
+            "market_data": market_data,
+            "fresh_evaluation": fresh_evaluation,
+        })
+
         try:
             result = await self.broker.submit_order(proposal.order)
         except Exception as exc:
+            reason = f"submission outcome unknown after error: {exc}"
+            self.approval_queue.mark_reconcile_required(proposal_id, reason)
             await self.audit_logger.log({
-                "event": "execution_error",
+                "event": "execution_reconcile_required",
                 "proposal_id": proposal_id,
-                "error": str(exc),
+                "reason": reason,
             })
-            return {"error": str(exc)}
+            return {"error": reason}
 
         if result.get("status") == "rejected":
+            reason = f"order rejected: {result.get('reason')}"
+            self.approval_queue.mark_execution_rejected(proposal_id, reason)
             await self.audit_logger.log({
                 "event": "order_rejected",
                 "proposal_id": proposal_id,
                 "reason": result.get("reason"),
                 "broker_result": result,
             })
-            return {"error": f"order rejected: {result.get('reason')}"}
+            return {"error": reason}
 
         order_id = result.get("order_id")
         if not order_id:
-            return await self._block(proposal_id, "broker response missing order_id")
+            reason = "broker response missing order_id; manual reconciliation required"
+            self.approval_queue.mark_reconcile_required(proposal_id, reason)
+            return await self._block(proposal_id, reason)
 
         self.active_orders[order_id] = proposal_id
-        self.approval_queue.mark_executed(proposal_id, order_id)
+        if not self.approval_queue.mark_executed(proposal_id, order_id):
+            reason = "execution receipt could not be persisted; manual reconciliation required"
+            self.approval_queue.mark_reconcile_required(proposal_id, reason)
+            await self.audit_logger.log({
+                "event": "execution_reconcile_required",
+                "proposal_id": proposal_id,
+                "order_id": order_id,
+                "reason": reason,
+                "broker_result": result,
+            })
+            return {"error": reason}
 
         receipt = {
             **result,
