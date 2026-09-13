@@ -1,5 +1,6 @@
 import pytest
 
+from backend import server as server_module
 from market.universe import NASDAQ_LISTED_URL, OTHER_LISTED_URL, NasdaqTraderUniverseProvider
 
 
@@ -61,3 +62,21 @@ async def test_directory_resolve_is_exact_and_read_only():
     assert row["authority"] == "none"
 
     assert await provider.resolve("BTC-USD") is None
+
+@pytest.mark.asyncio
+async def test_server_stock_search_reuses_one_directory_instance(monkeypatch):
+    calls = []
+
+    def counting_fetch(url: str) -> str:
+        calls.append(url)
+        return fake_fetch(url)
+
+    provider = NasdaqTraderUniverseProvider(fetch_text=counting_fetch)
+    monkeypatch.setattr(server_module, "_STOCK_UNIVERSE_PROVIDER", provider)
+
+    first = await server_module.search_stock_universe("AAPL")
+    second = await server_module.search_stock_universe("Vanguard")
+
+    assert [row["symbol"] for row in first["results"]] == ["AAPL"]
+    assert [row["symbol"] for row in second["results"]] == ["VTI"]
+    assert calls == [NASDAQ_LISTED_URL, OTHER_LISTED_URL]
