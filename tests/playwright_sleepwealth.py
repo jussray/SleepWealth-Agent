@@ -8,6 +8,20 @@ ARTIFACT_DIR = Path(os.getenv("SLEEPWEALTH_ARTIFACT_DIR", "artifacts"))
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def write_debug(page, prefix, stage):
+    safe_stage = stage.replace("/", "-").replace(" ", "-")
+    page.screenshot(
+        path=str(ARTIFACT_DIR / f"debug-{prefix}-{safe_stage}.png"),
+        full_page=True,
+    )
+    (ARTIFACT_DIR / f"debug-{prefix}-{safe_stage}.html").write_text(
+        page.content(), encoding="utf-8"
+    )
+    (ARTIFACT_DIR / f"debug-{prefix}-{safe_stage}.txt").write_text(
+        page.locator("body").inner_text(), encoding="utf-8"
+    )
+
+
 def assert_theme(page):
     theme = page.evaluate(
         """() => {
@@ -58,44 +72,62 @@ def assert_paper_receipt(page, lane):
 
 def prove(context, prefix):
     page = context.new_page()
-    response = page.goto(BASE_URL, wait_until="networkidle")
-    assert response is not None and response.ok
+    stage = "open"
+    try:
+        response = page.goto(BASE_URL, wait_until="networkidle")
+        assert response is not None and response.ok
+        stage = "initial-render"
+        write_debug(page, prefix, stage)
 
-    expect(page.get_by_role("heading", name="Sleep Wealth")).to_be_visible()
-    expect(page.get_by_text("NIGHT MINERAL", exact=False)).to_be_visible()
-    expect(page.get_by_text("SEPARATE LANES", exact=False)).to_be_visible()
-    expect(page.get_by_text("Live execution stays disabled", exact=False)).to_be_visible()
-    assert_theme(page)
+        expect(page.get_by_role("heading", name="Sleep Wealth")).to_be_visible()
+        expect(page.get_by_text("NIGHT MINERAL", exact=False)).to_be_visible()
+        expect(page.get_by_text("SEPARATE LANES", exact=False)).to_be_visible()
+        expect(page.get_by_text("Live execution stays disabled", exact=False)).to_be_visible()
+        assert_theme(page)
 
-    steps = page.get_by_label("Paper cycle")
-    expect(steps).to_contain_text("Observe")
-    expect(steps).to_contain_text("Evaluate")
-    expect(steps).to_contain_text("Simulate")
-    expect(steps).to_contain_text("Receipt")
+        steps = page.get_by_label("Paper cycle")
+        expect(steps).to_contain_text("Observe")
+        expect(steps).to_contain_text("Evaluate")
+        expect(steps).to_contain_text("Simulate")
+        expect(steps).to_contain_text("Receipt")
 
-    stock_tab = page.get_by_role("button", name="Stocks")
-    crypto_tab = page.get_by_role("button", name="Crypto")
-    expect(stock_tab).to_have_attribute("aria-pressed", "true")
-    expect(crypto_tab).to_have_attribute("aria-pressed", "false")
-    expect(page.get_by_label("Search U.S. listed market")).to_be_visible()
-    assert_cards(page, ("AAPL", "MSFT", "VTI"), "stock-market")
+        stock_tab = page.get_by_role("button", name="Stocks")
+        crypto_tab = page.get_by_role("button", name="Crypto")
+        expect(stock_tab).to_have_attribute("aria-pressed", "true")
+        expect(crypto_tab).to_have_attribute("aria-pressed", "false")
+        expect(page.get_by_label("Search U.S. listed market")).to_be_visible()
+        stage = "stock-cards"
+        assert_cards(page, ("AAPL", "MSFT", "VTI"), "stock-market")
 
-    page.get_by_role("button", name="Observe + run paper test").click()
-    assert_paper_receipt(page, "stock-market")
-    page.screenshot(path=str(ARTIFACT_DIR / f"sleepwealth-stock-{prefix}.png"), full_page=True)
+        stage = "stock-submit"
+        page.get_by_role("button", name="Observe + run paper test").click()
+        assert_paper_receipt(page, "stock-market")
+        page.screenshot(
+            path=str(ARTIFACT_DIR / f"sleepwealth-stock-{prefix}.png"), full_page=True
+        )
 
-    crypto_tab.click()
-    expect(page.locator("#app")).to_have_attribute("data-lane", "crypto")
-    expect(stock_tab).to_have_attribute("aria-pressed", "false")
-    expect(crypto_tab).to_have_attribute("aria-pressed", "true")
-    expect(page.get_by_label("Search U.S. listed market")).to_be_hidden()
-    expect(page.locator("#symbol")).to_have_value("BTC-USD")
-    assert_cards(page, ("BTC-USD", "ETH-USD", "SOL-USD"), "crypto")
+        stage = "crypto-switch"
+        crypto_tab.click()
+        expect(page.locator("#app")).to_have_attribute("data-lane", "crypto")
+        expect(stock_tab).to_have_attribute("aria-pressed", "false")
+        expect(crypto_tab).to_have_attribute("aria-pressed", "true")
+        expect(page.get_by_label("Search U.S. listed market")).to_be_hidden()
+        expect(page.locator("#symbol")).to_have_value("BTC-USD")
+        assert_cards(page, ("BTC-USD", "ETH-USD", "SOL-USD"), "crypto")
 
-    page.get_by_role("button", name="Observe + run paper test").click()
-    assert_paper_receipt(page, "crypto")
-    expect(page.locator("#result")).to_contain_text('"crypto_native": true')
-    page.screenshot(path=str(ARTIFACT_DIR / f"sleepwealth-crypto-{prefix}.png"), full_page=True)
+        stage = "crypto-submit"
+        page.get_by_role("button", name="Observe + run paper test").click()
+        assert_paper_receipt(page, "crypto")
+        expect(page.locator("#result")).to_contain_text('"crypto_native": true')
+        page.screenshot(
+            path=str(ARTIFACT_DIR / f"sleepwealth-crypto-{prefix}.png"), full_page=True
+        )
+    except Exception:
+        try:
+            write_debug(page, prefix, f"failure-{stage}")
+        except Exception:
+            pass
+        raise
 
 
 with sync_playwright() as p:
