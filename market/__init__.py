@@ -2,6 +2,7 @@
 
 from .lanes import CRYPTO_LANE, STOCK_LANE, LaneBoundFixtureProvider, get_lane_rules, normalize_lane
 from .observation import MarketObservation, observe_market
+from .pump_shadow import PumpShadowBridge, PumpShadowReceipt, PumpSnapshotProvider
 from .universe import ListedSecurity, NasdaqTraderUniverseProvider
 
 __all__ = [
@@ -11,6 +12,9 @@ __all__ = [
     "ListedSecurity",
     "MarketObservation",
     "NasdaqTraderUniverseProvider",
+    "PumpShadowBridge",
+    "PumpShadowReceipt",
+    "PumpSnapshotProvider",
     "get_lane_rules",
     "normalize_lane",
     "observe_market",
