@@ -15,15 +15,15 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from race.modes import Decision, FutureYou, Mode
-from race.scoring import EngineScore, RaceResult
+from race.scoring import RaceResult
 
 
 @dataclass
 class CuratorVerdict:
     """What you decided after reading. Logged, and applied to the next race."""
     race_id: int
-    whose_logic_held: str            # "Musk" | "Gates" | "neither" | "both"
-    was_it_luck: str                 # your /confess call
+    whose_logic_held: str
+    was_it_luck: str
     next_duration: str
     changes: List[str] = field(default_factory=list)
     futureyou: Optional[FutureYou] = None
@@ -58,8 +58,6 @@ class CuratorDebrief:
         self.result = result
         self.transcripts = transcripts
         self.patches = patches
-
-    # ---- mode lenses -------------------------------------------------
 
     def ultrathink(self) -> List[str]:
         out = []
@@ -207,10 +205,7 @@ class CuratorDebrief:
         )
         return out
 
-    # ---- render ------------------------------------------------------
-
     def render(self) -> str:
-        w = self.result.winner
         head = (
             f"CURATOR DEBRIEF — RACE {self.result.race_id}\n"
             f"{self.result.render()}\n"
