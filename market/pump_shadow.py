@@ -3,7 +3,8 @@
 This module intentionally performs no Pump website scraping, wallet access,
 transaction signing, or real-money execution. It accepts a permitted read-only
 snapshot, canonicalizes it through the existing market observation primitive,
-and mirrors the observed price into the crypto sandbox for practice only.
+binds the Pump mint to that observation, and mirrors the observed price into the
+crypto sandbox for practice only.
 """
 
 from __future__ import annotations
@@ -22,6 +23,60 @@ from market.observation import MarketObservation, observe_market
 _ALLOWED_SOURCE_CLASSIFICATIONS = frozenset({"authorized-api", "public-chain-read-only", "user-supplied"})
 
 
+def _digest(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class PumpLiveObservation:
+    """Pump-specific identity binding over the canonical read-only market observation."""
+
+    mint: str
+    market: MarketObservation
+    fingerprint: str
+
+    @property
+    def symbol(self) -> str:
+        return self.market.symbol
+
+    @property
+    def price(self) -> float:
+        return self.market.price
+
+    @property
+    def lane(self) -> str | None:
+        return self.market.lane
+
+    @property
+    def crypto_native(self) -> bool:
+        return self.market.crypto_native
+
+    @property
+    def instrument_type(self) -> str | None:
+        return self.market.instrument_type
+
+    @property
+    def read_only(self) -> bool:
+        return self.market.read_only
+
+    @property
+    def authority(self) -> str:
+        return self.market.authority
+
+    @property
+    def source(self) -> str:
+        return self.market.source
+
+    @property
+    def source_classification(self) -> str:
+        return self.market.source_classification
+
+    @property
+    def market_fingerprint(self) -> str:
+        return self.market.fingerprint
+
+
 @dataclass(frozen=True, slots=True)
 class PumpShadowReceipt:
     symbol: str
@@ -29,6 +84,7 @@ class PumpShadowReceipt:
     live_mode: str
     practice_mode: str
     observation_fingerprint: str
+    market_fingerprint: str
     mirrored_price: float
     mirror_fingerprint: str
     source: str
@@ -79,7 +135,14 @@ class PumpSnapshotProvider:
         source = str(snapshot["source"]).strip()
         if not mint or not symbol or not source:
             raise ValueError("pump snapshot identity fields must not be empty")
-        return {**snapshot, "mint": mint, "symbol": symbol, "price": price, "source": source, "source_classification": source_classification}
+        return {
+            **snapshot,
+            "mint": mint,
+            "symbol": symbol,
+            "price": price,
+            "source": source,
+            "source_classification": source_classification,
+        }
 
     async def get_market_data(self, symbol: str) -> dict[str, Any]:
         requested = str(symbol).strip().upper()
@@ -104,15 +167,33 @@ class PumpShadowBridge:
     """Mirror a live read-only Pump observation into the crypto practice sandbox."""
 
     @staticmethod
-    async def observe(snapshot: dict[str, Any]) -> MarketObservation:
+    async def observe(snapshot: dict[str, Any]) -> PumpLiveObservation:
         live_mode = get_execution_mode(LIVE_MODE)
         if live_mode.real_execution_enabled or live_mode.simulated_execution_enabled:
             raise RuntimeError("live mode authority widened unexpectedly")
         provider = PumpSnapshotProvider(snapshot)
-        return await observe_market(provider, provider.snapshot["symbol"])
+        market = await observe_market(provider, provider.snapshot["symbol"])
+        fingerprint = _digest(
+            {
+                "schema": "pump-live-observation-v1",
+                "mint": provider.snapshot["mint"],
+                "market_fingerprint": market.fingerprint,
+                "read_only": True,
+                "authority": "none",
+            }
+        )
+        return PumpLiveObservation(
+            mint=provider.snapshot["mint"],
+            market=market,
+            fingerprint=fingerprint,
+        )
 
     @staticmethod
-    def mirror_to_practice(observation: MarketObservation, *, mint: str, sandbox: CryptoSandboxBroker) -> PumpShadowReceipt:
+    def mirror_to_practice(
+        observation: PumpLiveObservation,
+        *,
+        sandbox: CryptoSandboxBroker,
+    ) -> PumpShadowReceipt:
         practice_mode = get_execution_mode(PRACTICE_MODE)
         if not practice_mode.simulated_execution_enabled or practice_mode.real_execution_enabled:
             raise RuntimeError("practice mode authority boundary is invalid")
@@ -120,27 +201,29 @@ class PumpShadowBridge:
             raise PermissionError("only non-authorizing read-only observations may be mirrored")
         if observation.lane != "crypto" or not observation.crypto_native:
             raise ValueError("Pump shadow bridge accepts crypto-native observations only")
+        if not observation.mint:
+            raise ValueError("bound mint must not be empty")
         if not sandbox.is_paper_only():
             raise PermissionError("Pump shadow bridge requires a paper-only sandbox")
-        normalized_mint = str(mint).strip()
-        if not normalized_mint:
-            raise ValueError("mint must not be empty")
+
         sandbox.set_market_price(observation.symbol, observation.price)
         payload = {
             "symbol": observation.symbol,
-            "mint": normalized_mint,
+            "mint": observation.mint,
             "observation_fingerprint": observation.fingerprint,
+            "market_fingerprint": observation.market_fingerprint,
             "mirrored_price": observation.price,
             "sandbox_wallet": sandbox.wallet_id,
             "real_money": False,
         }
-        mirror_fingerprint = sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        mirror_fingerprint = _digest(payload)
         return PumpShadowReceipt(
             symbol=observation.symbol,
-            mint=normalized_mint,
+            mint=observation.mint,
             live_mode=LIVE_MODE,
             practice_mode=PRACTICE_MODE,
             observation_fingerprint=observation.fingerprint,
+            market_fingerprint=observation.market_fingerprint,
             mirrored_price=observation.price,
             mirror_fingerprint=mirror_fingerprint,
             source=observation.source,
