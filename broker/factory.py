@@ -2,7 +2,7 @@ from typing import Optional
 
 from .base import BaseBroker
 
-KNOWN_BROKERS = ("mock",)
+KNOWN_BROKERS = ("mock", "crypto-sandbox")
 
 
 def _load_broker_class(broker_name: str):
@@ -10,8 +10,13 @@ def _load_broker_class(broker_name: str):
         from .mock import MockBroker
 
         return MockBroker
+    if broker_name == "crypto-sandbox":
+        from .crypto_sandbox import CryptoSandboxBroker
+
+        return CryptoSandboxBroker
     raise ValueError(
-        "External broker adapters are disabled in this build. Choose broker='mock'."
+        "External broker adapters are disabled in this build. "
+        "Choose broker='mock' or broker='crypto-sandbox'."
     )
 
 
@@ -20,7 +25,7 @@ def get_broker(
     paper_only: bool = True,
     credentials: Optional[dict] = None,
 ) -> BaseBroker:
-    """Return the local mock broker only."""
+    """Return a local simulation broker; credentials and real-money mode are rejected."""
     if not paper_only:
         raise ValueError("Live broker execution is disabled by repository policy.")
     if credentials:
