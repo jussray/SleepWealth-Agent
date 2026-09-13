@@ -51,6 +51,9 @@ jobs:
           SLEEPWEALTH_MARKET_SOURCE: mock
         run: pytest tests/ -v --tb=short
 
+      - name: External crypto observer boundaries
+        run: pytest tests/test_external_crypto_sources.py -v --tb=short
+
       - name: Stock paper smoke test
         env:
           SLEEPWEALTH_MARKET_SOURCE: mock
