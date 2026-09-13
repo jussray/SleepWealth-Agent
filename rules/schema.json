@@ -11,6 +11,30 @@
     "symbol_scope": {"type": "string", "enum": ["approved", "observable-market"]},
     "approved_symbols": {"type": "array", "items": {"type": "string"}},
     "featured_symbols": {"type": "array", "items": {"type": "string"}},
+    "capital_ladder": {
+      "type": "object",
+      "required": [
+        "paper_only",
+        "min_net_margin_pct",
+        "max_days_held",
+        "promotion_wins_required",
+        "protected_profit_pct",
+        "max_step_multiplier",
+        "max_cycle_loss_pct",
+        "can_auto_promote"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "paper_only": {"const": true},
+        "min_net_margin_pct": {"type": "number", "minimum": 0},
+        "max_days_held": {"type": "integer", "minimum": 1},
+        "promotion_wins_required": {"type": "integer", "minimum": 1},
+        "protected_profit_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "max_step_multiplier": {"type": "number", "minimum": 1},
+        "max_cycle_loss_pct": {"type": "number", "exclusiveMinimum": 0},
+        "can_auto_promote": {"const": false}
+      }
+    },
     "modes": {
       "type": "object",
       "properties": {

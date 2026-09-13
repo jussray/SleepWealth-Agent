@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
+  "version": "0.4.0",
   "floor_cash": 5.0,
   "max_daily_loss": 100.0,
   "max_position_size": 1000.0,
@@ -19,6 +19,17 @@
       "symbol_scope": "classified-observation",
       "featured_symbols": ["BTC-USD", "ETH-USD", "SOL-USD"]
     }
+  },
+  "capital_ladder": {
+    "enabled": true,
+    "paper_only": true,
+    "min_net_margin_pct": 15.0,
+    "max_days_held": 30,
+    "promotion_wins_required": 3,
+    "protected_profit_pct": 30.0,
+    "max_step_multiplier": 1.5,
+    "max_cycle_loss_pct": 20.0,
+    "can_auto_promote": false
   },
   "modes": {
     "truthmode": true,

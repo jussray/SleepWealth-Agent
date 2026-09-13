@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import typer
 
@@ -6,6 +7,7 @@ from approvals.queue import ApprovalQueue
 from audit.logger import AuditLogger
 from broker.base import Order
 from broker.factory import get_broker
+from engine.capital_ladder import CapitalLadder, FlipCycle
 from engine.evaluator import ProposalEvaluator
 from engine.validator import RulesValidator
 from execution.executor import ExecutionManager
@@ -30,7 +32,10 @@ async def _run(mode, broker, symbol, qty, side, auto_approve):
         for err in errors:
             typer.echo(f"  - {err}")
         raise typer.Exit(1)
-    typer.echo(f"[RULES] v{rules['version']} valid | floor=${rules['floor_cash']} ceiling=${rules['ceiling']['current']}")
+    typer.echo(
+        f"[RULES] v{rules['version']} valid | floor=${rules['floor_cash']} "
+        f"ceiling=${rules['ceiling']['current']}"
+    )
 
     try:
         broker_instance = get_broker(broker, paper_only=paper_only)
@@ -59,12 +64,19 @@ async def _run(mode, broker, symbol, qty, side, auto_approve):
     evaluator = ProposalEvaluator(rules)
     queue = ApprovalQueue()
     audit = AuditLogger()
-    gates = RiskGates(broker_instance, portfolio, max_daily_loss=rules.get("max_daily_loss", 100.0))
+    gates = RiskGates(
+        broker_instance,
+        portfolio,
+        max_daily_loss=rules.get("max_daily_loss", 100.0),
+    )
     executor = ExecutionManager(broker_instance, queue, audit, gates)
 
     order = Order(symbol=symbol, qty=qty, side=side)
     evaluation = evaluator.evaluate(order, account, price=observation.price)
-    typer.echo(f"[EVAL] allowed={evaluation['allowed']} risk={evaluation['risk_score']}% | {evaluation['reason']}")
+    typer.echo(
+        f"[EVAL] allowed={evaluation['allowed']} "
+        f"risk={evaluation['risk_score']}% | {evaluation['reason']}"
+    )
 
     if not evaluation["allowed"]:
         await audit.log(
@@ -106,7 +118,11 @@ def run(
     symbol: str = typer.Option("AAPL"),
     qty: float = typer.Option(1),
     side: str = typer.Option("buy", help="buy | sell"),
-    auto_approve: bool = typer.Option(False, "--auto-approve", help="skip human approval (paper only)"),
+    auto_approve: bool = typer.Option(
+        False,
+        "--auto-approve",
+        help="skip human approval (paper only)",
+    ),
 ):
     """Run one full OODA cycle: observe -> evaluate -> propose -> approve -> execute -> audit."""
     if mode != "paper":
@@ -129,6 +145,45 @@ def status(broker: str = typer.Option("mock")):
         typer.echo(f"equity: ${acct.get('equity', 0):.2f}")
 
     asyncio.run(_status())
+
+
+@app.command()
+def ladder(
+    buy_cost: float = typer.Option(..., min=0.0, help="simulated acquisition cost"),
+    sale_proceeds: float = typer.Option(..., min=0.0, help="simulated sale proceeds"),
+    fees: float = typer.Option(0.0, min=0.0, help="fees paid for the simulated cycle"),
+    other_costs: float = typer.Option(
+        0.0,
+        min=0.0,
+        help="shipping or other simulated cycle costs",
+    ),
+    days_held: int = typer.Option(0, min=0, help="days capital was tied up"),
+    prior_qualified_wins: int = typer.Option(
+        0,
+        min=0,
+        help="already verified consecutive qualifying paper cycles",
+    ),
+):
+    """Score one paper flip and report whether the capital ladder earned a review."""
+    rules = load_rules()
+    ok, errors = RulesValidator().validate(rules)
+    if not ok:
+        for err in errors:
+            typer.echo(f"  - {err}")
+        raise typer.Exit(1)
+
+    policy = CapitalLadder(rules)
+    result = policy.assess(
+        FlipCycle(
+            buy_cost=buy_cost,
+            sale_proceeds=sale_proceeds,
+            fees=fees,
+            other_costs=other_costs,
+            days_held=days_held,
+        ),
+        prior_qualified_wins=prior_qualified_wins,
+    )
+    typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
 @app.command()
