@@ -148,7 +148,12 @@ def write_proof_manifest():
         assert len(commit_sha) == 40
         assert all(char in "0123456789abcdef" for char in commit_sha.lower())
 
-    screenshots = ["sleepwealth-desktop.png", "sleepwealth-mobile.png"]
+    screenshots = [
+        "sleepwealth-stock-desktop.png",
+        "sleepwealth-crypto-desktop.png",
+        "sleepwealth-stock-mobile.png",
+        "sleepwealth-crypto-mobile.png",
+    ]
     manifest = {
         "schema": "sleepwealth-playwright-proof-v1",
         "commit_sha": commit_sha,
@@ -159,6 +164,17 @@ def write_proof_manifest():
         "live_execution": False,
         "market_observation": "read-only",
         "authority": "non-authorizing evidence",
+        "claim_scope": [
+            "stock-lane UI runtime rendered",
+            "crypto-lane UI runtime rendered",
+            "paper execution paths exercised",
+            "read-only market observation semantics displayed",
+        ],
+        "does_not_prove": [
+            "live execution authority",
+            "external broker connectivity",
+            "real-money movement",
+        ],
         "screenshots": [
             {
                 "name": name,
