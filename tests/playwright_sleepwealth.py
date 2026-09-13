@@ -81,7 +81,7 @@ def prove(context, prefix):
 
         expect(page.get_by_role("heading", name="Sleep Wealth")).to_be_visible()
         expect(page.get_by_text("NIGHT MINERAL", exact=False)).to_be_visible()
-        expect(page.get_by_text("SEPARATE LANES", exact=False)).to_be_visible()
+        expect(page.locator(".topline .badge")).to_contain_text("SEPARATE LANES")
         expect(page.get_by_text("Live execution stays disabled", exact=False)).to_be_visible()
         assert_theme(page)
 
