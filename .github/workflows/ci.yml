@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -30,6 +31,21 @@ jobs:
           checked_out_sha="$(git rev-parse HEAD)"
           test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"
           echo "exact_head_sha=$checked_out_sha"
+
+      - name: Gate main pushes by merged-PR provenance
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAIN_PROVENANCE_RECEIPT: artifacts/main-provenance-ci.json
+        run: python governance/main_provenance.py
+
+      - name: Upload CI provenance receipt
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-main-provenance-receipt
+          path: artifacts/main-provenance-ci.json
+          if-no-files-found: error
 
       - uses: actions/setup-python@v5
         with:
