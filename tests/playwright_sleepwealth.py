@@ -4,6 +4,13 @@ import os
 import subprocess
 from pathlib import Path
 
+from authority import (
+    AuthorityGrant,
+    AuthorityRequest,
+    AuthorityRuntime,
+    ConsequenceTier,
+    EffectClass,
+)
 from evidence import EvidenceArtifact, EvidenceObjectV1
 from playwright.sync_api import expect, sync_playwright
 
@@ -187,6 +194,27 @@ def write_proof_manifest():
         ),
         artifacts=artifacts,
     )
+    proof_claim_grant = AuthorityGrant(
+        grant_id="ci-proof-claim-v1",
+        subject="sleepwealth-paper-ui-runtime",
+        allowed_actions=("assert_runtime_truth",),
+        allowed_effects=(EffectClass.READ_ONLY,),
+        max_consequence=ConsequenceTier.INFORMATIONAL,
+    )
+    authority_decision = AuthorityRuntime().evaluate(
+        AuthorityRequest(
+            action="assert_runtime_truth",
+            subject="sleepwealth-paper-ui-runtime",
+            consequence=ConsequenceTier.INFORMATIONAL,
+            effect=EffectClass.READ_ONLY,
+            evidence=evidence,
+            current_source_sha=tested_sha,
+            execution_mode="practice",
+            grant=proof_claim_grant,
+        )
+    )
+    assert authority_decision.allowed is True
+
     manifest = {
         "schema": "sleepwealth-playwright-proof-v1",
         "tested_sha": tested_sha,
@@ -196,7 +224,7 @@ def write_proof_manifest():
         "github_run_id": os.getenv("GITHUB_RUN_ID"),
         "repository": os.getenv("GITHUB_REPOSITORY"),
         "proof_type": "playwright-ui-runtime",
-        "execution_mode": "paper",
+        "execution_mode": "practice",
         "live_execution": False,
         "market_observation": "read-only",
         "authority": "non-authorizing evidence",
@@ -204,6 +232,7 @@ def write_proof_manifest():
         "does_not_prove": list(evidence.does_not_prove),
         "screenshots": [artifact.to_dict() for artifact in artifacts],
         "evidence": evidence.to_dict(),
+        "authority_decision": authority_decision.to_dict(),
     }
     (ARTIFACT_DIR / "proof-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
