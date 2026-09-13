@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "identity_ref": "identity/mom8-public-token.json",
+  "readiness_ref": "identity/mom8-launch-readiness.json",
+  "public_name": "MOM OF 8",
+  "ticker": "MOM8",
+  "status": "brand-assets-ready",
+  "assets": {
+    "logo": "public/mom8/logo.svg",
+    "preview": "public/mom8/index.html",
+    "stylesheet": "public/mom8/styles.css"
+  },
+  "visual_system": {
+    "concept": "sunrise ring with eight orbit points around the MOM8 wordmark",
+    "palette": {
+      "midnight": "#080b18",
+      "royal_purple": "#6b46c1",
+      "sunrise_gold": "#f6c453",
+      "soft_cream": "#fdf6e3",
+      "proof_mint": "#8be8c1",
+      "coral_accent": "#ff826f"
+    },
+    "traits": [
+      "recognizable at avatar size",
+      "simple silhouette",
+      "high contrast",
+      "family-sized ambition",
+      "proof-first public story",
+      "not derivative of another token brand"
+    ]
+  },
+  "continuity": {
+    "parent_fingerprint": "MOM8::prelaunch-brand-readiness::v1",
+    "asset_fingerprint": "MOM8::prelaunch-brand-assets::v1",
+    "proof_cookie": "mom8-prelaunch-brand-assets-v1",
+    "non_secret": true,
+    "creates_authority": false,
+    "renews_authority": false
+  },
+  "authority": {
+    "public_brand_assets": true,
+    "wallet": false,
+    "mint": false,
+    "launch": false,
+    "trade": false,
+    "spend": false,
+    "transfer": false,
+    "financial_promises": false
+  }
+}
