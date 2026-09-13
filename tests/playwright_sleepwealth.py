@@ -97,6 +97,16 @@ def write_proof_manifest():
         "live_execution": False,
         "market_observation": "read-only",
         "authority": "non-authorizing evidence",
+        "claim_scope": [
+            "ui runtime rendered",
+            "paper execution path exercised",
+            "read-only market observation semantics displayed",
+        ],
+        "does_not_prove": [
+            "live execution authority",
+            "external broker connectivity",
+            "real-money movement",
+        ],
         "screenshots": [
             {
                 "name": name,
