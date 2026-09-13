@@ -1,0 +1,33 @@
+name: main provenance witness
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verify-main-provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify main commit came from merged PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAIN_PROVENANCE_RECEIPT: artifacts/main-provenance.json
+        run: python governance/main_provenance.py
+
+      - name: Upload provenance receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-provenance-receipt
+          path: artifacts/main-provenance.json
+          if-no-files-found: error
