@@ -146,6 +146,8 @@ jobs:
           exit 1
 
       - name: Playwright Sleep Wealth proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python tests/playwright_sleepwealth.py
 
       - name: Upload Sleep Wealth Playwright proof
