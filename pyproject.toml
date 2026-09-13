@@ -3,13 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "trading-agent"
+name = "sleepwealth-agent"
 version = "0.1.0"
-description = "Governed trading agent: rules engine, approval queue, risk gates, audit trail."
+description = "SleepWealth Agent: governed paper-trading and simulation research shell."
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.12.0",
-    "httpx>=0.25.0",
 ]
 
 [project.optional-dependencies]
@@ -21,10 +20,14 @@ dev = [
 ]
 
 [project.scripts]
+sleepwealth-agent = "cli.main:app"
+sleepwealth-race = "cli.race:app"
 trading-agent = "cli.main:app"
+trading-race = "cli.race:app"
 
-[tool.setuptools]
-packages = ["broker", "portfolio", "rules", "engine", "approvals", "execution", "audit", "risk", "cli"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["approvals*", "audit*", "broker*", "cli*", "engine*", "execution*", "gate*", "portfolio*", "race*", "risk*", "rules*"]
 
 [tool.setuptools.package-data]
 rules = ["*.json"]
