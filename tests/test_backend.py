@@ -285,3 +285,25 @@ async def test_default_mock_provider_supports_both_lanes_without_real_money(tmp_
     assert result["execution"]["filled_price"] == 100.0
     assert "approved_symbols" not in result
     assert result["live_execution"] is False
+
+@pytest.mark.asyncio
+async def test_default_mock_provider_rejects_symbols_from_the_other_lane(tmp_path, monkeypatch):
+    monkeypatch.setenv("SLEEPWEALTH_MARKET_SOURCE", "mock")
+
+    with pytest.raises(ValueError, match="BTC-USD is classified as crypto"):
+        await run_paper_dry_run(
+            "BTC-USD",
+            0.00005,
+            "buy",
+            str(tmp_path / "stock-audit.log"),
+            lane=STOCK_LANE,
+        )
+
+    with pytest.raises(ValueError, match="AAPL is classified as stock-market"):
+        await run_paper_dry_run(
+            "AAPL",
+            0.01,
+            "buy",
+            str(tmp_path / "crypto-audit.log"),
+            lane=CRYPTO_LANE,
+        )
