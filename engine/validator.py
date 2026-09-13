@@ -1,15 +1,63 @@
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import SchemaError
+
+from rules import load_schema
+
+
 class RulesValidator:
-    """Minimal, dependency-free rules validation. Lindy: no ajv, no jsonschema."""
+    """Validate rules against the checked-in JSON Schema and policy invariants."""
+
+    def __init__(self, schema: dict | None = None):
+        self.schema = schema if schema is not None else load_schema()
+        self._schema_validator: Draft7Validator | None = None
+        self._schema_error: str | None = None
+
+        try:
+            Draft7Validator.check_schema(self.schema)
+        except SchemaError as exc:
+            self._schema_error = f"rules schema is invalid: {exc.message}"
+        else:
+            self._schema_validator = Draft7Validator(self.schema)
+
+    @staticmethod
+    def _schema_path(error) -> str:
+        parts = [str(part) for part in error.absolute_path]
+        return ".".join(parts) if parts else "$"
+
+    def _schema_errors(self, rules: object) -> list[str]:
+        if self._schema_error is not None:
+            return [self._schema_error]
+
+        assert self._schema_validator is not None
+        validation_errors = sorted(
+            self._schema_validator.iter_errors(rules),
+            key=lambda error: tuple(str(part) for part in error.absolute_path),
+        )
+        return [
+            f"schema {self._schema_path(error)}: {error.message}"
+            for error in validation_errors
+        ]
 
     def validate(self, rules: dict) -> tuple[bool, list[str]]:
-        errors: list[str] = []
+        errors = self._schema_errors(rules)
 
+        # The schema is authoritative for structure and types. If the root is not
+        # an object, policy checks cannot run safely and the schema failure is
+        # already sufficient to block the ruleset.
+        if not isinstance(rules, dict):
+            return False, errors
+
+        # Policy checks remain independent and human-readable. They intentionally
+        # duplicate a few load-bearing constraints so policy intent cannot be
+        # weakened merely by broadening schema syntax.
         if "version" not in rules:
             errors.append("missing 'version'")
 
         if "floor_cash" not in rules:
             errors.append("missing 'floor_cash'")
-        elif not isinstance(rules["floor_cash"], (int, float)):
+        elif not isinstance(rules["floor_cash"], (int, float)) or isinstance(
+            rules["floor_cash"], bool
+        ):
             errors.append("'floor_cash' must be a number")
         elif rules["floor_cash"] < 0:
             errors.append("'floor_cash' must be >= 0")
@@ -21,7 +69,7 @@ class RulesValidator:
         ceiling = rules.get("ceiling")
         if ceiling is None:
             errors.append("missing 'ceiling'")
-        else:
+        elif isinstance(ceiling, dict):
             if ceiling.get("can_auto_increase") is not False:
                 errors.append("'ceiling.can_auto_increase' must be false (human-only ladder)")
             if "current" not in ceiling:
@@ -53,7 +101,7 @@ class RulesValidator:
                     errors.append(f"'lanes.{lane}.featured_symbols' must contain strings")
 
         ladder = rules.get("capital_ladder")
-        if ladder is not None:
+        if isinstance(ladder, dict):
             if ladder.get("paper_only") is not True:
                 errors.append("'capital_ladder.paper_only' must be true")
             if ladder.get("can_auto_promote") is not False:
