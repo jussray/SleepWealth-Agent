@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from race.modes import Decision, FutureYou, Mode, ModeNote
+from race.modes import Decision, FutureYou, ModeNote
 
 
 @dataclass
@@ -91,10 +91,8 @@ class RaceEngine(ABC):
         self.risk_threshold = risk_threshold
         self.max_drawdown_pct = max_drawdown_pct
         self.approved_symbols = approved_symbols
-        self.lessons: List[str] = []      # patches learned from opponent MOVES
+        self.lessons: List[str] = []
         self.decisions: List[Decision] = []
-
-    # ---- required per-style behaviour --------------------------------
 
     @abstractmethod
     def decide(self, snapshot: MarketSnapshot, state: EngineState) -> Decision:
@@ -104,14 +102,9 @@ class RaceEngine(ABC):
     def learn_from_moves(self, opponent_decisions: List[Decision]) -> List[str]:
         """Read the opponent's MOVES, not their P&L. Return patches applied."""
 
-    # ---- shared governance -------------------------------------------
-
     def redteam(self, decision: Decision, state: EngineState,
                 snapshot: MarketSnapshot) -> Decision:
-        """Same Redteam contract for both engines. Different tolerance.
-
-        Runs AFTER the engine decides, BEFORE anything executes.
-        """
+        """Same Redteam contract for both engines. Different tolerance."""
         if decision.action == "hold":
             return decision
 
