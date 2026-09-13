@@ -1,6 +1,8 @@
 import pytest
+from typer.testing import CliRunner
 
 from broker.factory import KNOWN_BROKERS, get_broker
+from cli.main import app
 
 
 def test_factory_exposes_mock_only():
@@ -31,3 +33,12 @@ def test_direct_external_adapters_are_disabled():
         AlpacaBroker()
     with pytest.raises(IbkrDisabled):
         IBKRBroker()
+
+
+def test_cli_advertises_mock_only_execution():
+    result = CliRunner().invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    help_text = result.stdout.lower()
+    assert "mock only" in help_text
+    assert "mock | alpaca" not in help_text
+    assert "live execution is disabled" in help_text
