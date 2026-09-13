@@ -20,7 +20,7 @@ trading-race = "cli.race:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["approvals*", "audit*", "backend*", "broker*", "cli*", "engine*", "evidence*", "execution*", "gate*", "market*", "portfolio*", "race*", "risk*", "rules*"]
+include = ["approvals*", "audit*", "authority*", "backend*", "broker*", "cli*", "engine*", "evidence*", "execution*", "gate*", "market*", "portfolio*", "race*", "risk*", "rules*"]
 
 [tool.setuptools.package-data]
 rules = ["*.json"]
