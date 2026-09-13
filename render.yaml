@@ -6,6 +6,6 @@ services:
     region: virginia
     branch: main
     buildCommand: pip install -e .
-    startCommand: python -m backend.server --host 0.0.0.0 --port $PORT
+    startCommand: python -m backend.runtime_server --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: checksPass
