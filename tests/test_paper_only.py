@@ -42,3 +42,17 @@ def test_cli_advertises_mock_only_execution():
     assert "mock only" in help_text
     assert "mock | alpaca" not in help_text
     assert "live execution is disabled" in help_text
+
+def test_cli_paper_cycle_binds_the_mock_quote_feed(tmp_path):
+    result = CliRunner().invoke(
+        app,
+        ["run", "--auto-approve"],
+        env={
+            "SLEEPWEALTH_MARKET_SOURCE": "unsupported-source",
+            "SLEEPWEALTH_AUDIT_LOG": str(tmp_path / "audit.log"),
+        },
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "source=mock-market-observation" in result.stdout
+    assert "paper simulation only; no real money moved" in result.stdout
