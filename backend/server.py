@@ -31,6 +31,8 @@ from rules import load_rules
 
 
 _STOCK_UNIVERSE_PROVIDER = NasdaqTraderUniverseProvider()
+STOCK_DEFAULT_QTY = 0.01
+CRYPTO_DEFAULT_QTY = 0.00001
 
 
 DASHBOARD_HTML = """<!doctype html>
@@ -93,6 +95,7 @@ const app=document.getElementById('app');
 const markets=document.getElementById('markets');
 const result=document.getElementById('result');
 const symbolInput=document.getElementById('symbol');
+const qtyInput=document.getElementById('qty');
 const runButton=document.getElementById('run-test');
 const stockDiscovery=document.getElementById('stock-discovery');
 const cryptoDiscovery=document.getElementById('crypto-discovery');
@@ -122,6 +125,7 @@ function setLane(lane){
   const crypto=lane==='crypto';
   stockDiscovery.hidden=crypto;cryptoDiscovery.hidden=!crypto;
   symbolInput.value=crypto?'BTC-USD':'AAPL';
+  qtyInput.value=crypto?'0.00001':'0.01';
   laneCopy.textContent=crypto?'Crypto lives in its own lane: crypto-classified read-only observation and paper-only simulation.':'Stocks live in their own lane: U.S.-listed discovery, read-only observation, paper-only simulation.';
   result.textContent=`Ready for a ${crypto?'crypto':'stock'} paper test.`;
   loadMarkets();
@@ -146,7 +150,7 @@ document.getElementById('dry-run-form').addEventListener('submit',async event=>{
   event.preventDefault();runButton.disabled=true;result.textContent=`Observing ${activeLane} + running governed paper cycle…`;
   try{
     const endpoint=activeLane==='crypto'?'/api/crypto/dry-run':'/api/stock/dry-run';
-    const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:symbolInput.value,qty:Number(document.getElementById('qty').value),side:document.getElementById('side').value})});
+    const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:symbolInput.value,qty:Number(qtyInput.value),side:document.getElementById('side').value})});
     result.textContent=JSON.stringify(await response.json(),null,2);await loadMarkets();
   }catch(error){result.textContent=JSON.stringify({status:'error',error:String(error)},null,2)}
   finally{runButton.disabled=false}
@@ -551,10 +555,11 @@ class SleepWealthHandler(BaseHTTPRequestHandler):
             else:
                 lane = normalize_lane(payload.get("lane", STOCK_LANE))
             default_symbol = "BTC-USD" if lane == CRYPTO_LANE else "AAPL"
+            default_qty = CRYPTO_DEFAULT_QTY if lane == CRYPTO_LANE else STOCK_DEFAULT_QTY
             result = asyncio.run(
                 run_paper_dry_run(
                     payload.get("symbol", default_symbol),
-                    payload.get("qty", 0.01),
+                    payload.get("qty", default_qty),
                     payload.get("side", "buy"),
                     lane=lane,
                 )
