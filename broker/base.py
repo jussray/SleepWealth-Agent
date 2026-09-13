@@ -3,21 +3,27 @@ from dataclasses import dataclass
 from typing import List
 
 
-@dataclass
+@dataclass(frozen=True)
 class Position:
     """An open position."""
+
     symbol: str
     qty: float
     avg_price: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class Order:
-    """An order to submit."""
+    """An immutable order intent.
+
+    Approval is bound to these exact values. Replacing the order on an approved
+    proposal is detected by the approval fingerprint before broker submission.
+    """
+
     symbol: str
     qty: float
-    side: str  # "buy" | "sell"
-    asset_class: str = "stocks"  # "stocks" | "crypto"
+    side: str
+    asset_class: str = "stocks"
 
 
 class BaseBroker(ABC):
@@ -29,7 +35,7 @@ class BaseBroker(ABC):
 
     @abstractmethod
     async def get_account_summary(self) -> dict:
-        """Return {'cash', 'equity', 'timestamp'}."""
+        """Return account summary data."""
 
     @abstractmethod
     async def get_positions(self) -> List[Position]:
@@ -37,7 +43,7 @@ class BaseBroker(ABC):
 
     @abstractmethod
     async def submit_order(self, order: Order) -> dict:
-        """Return {'order_id', 'status', ...} or {'status': 'rejected', 'reason'}."""
+        """Submit a simulated order to the active broker implementation."""
 
     @abstractmethod
     async def cancel_order(self, order_id: str) -> bool:
@@ -49,7 +55,7 @@ class BaseBroker(ABC):
 
     @abstractmethod
     async def get_market_data(self, symbol: str) -> dict:
-        """Return {'symbol', 'price', 'bid', 'ask', 'timestamp'}."""
+        """Return simulated market data."""
 
     @abstractmethod
     def is_paper_only(self) -> bool:
