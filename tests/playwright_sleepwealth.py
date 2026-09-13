@@ -4,6 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from evidence import EvidenceArtifact, EvidenceObjectV1
 from playwright.sync_api import expect, sync_playwright
 
 BASE_URL = os.getenv("SLEEPWEALTH_BASE_URL", "http://127.0.0.1:8765")
@@ -163,6 +164,29 @@ def write_proof_manifest():
         "sleepwealth-stock-mobile.png",
         "sleepwealth-crypto-mobile.png",
     ]
+    artifacts = tuple(
+        EvidenceArtifact(name=name, sha256=sha256_file(ARTIFACT_DIR / name))
+        for name in screenshots
+    )
+    evidence = EvidenceObjectV1(
+        subject="sleepwealth-paper-ui-runtime",
+        evidence_type="playwright-ui-runtime",
+        source_sha=source_sha,
+        tested_sha=tested_sha,
+        authority_ceiling="paper-only; read-only market observation; no real-money execution",
+        claims=(
+            "stock-lane UI runtime rendered",
+            "crypto-lane UI runtime rendered",
+            "paper execution paths exercised",
+            "read-only market observation semantics displayed",
+        ),
+        does_not_prove=(
+            "live execution authority",
+            "external broker connectivity",
+            "real-money movement",
+        ),
+        artifacts=artifacts,
+    )
     manifest = {
         "schema": "sleepwealth-playwright-proof-v1",
         "tested_sha": tested_sha,
@@ -176,21 +200,10 @@ def write_proof_manifest():
         "live_execution": False,
         "market_observation": "read-only",
         "authority": "non-authorizing evidence",
-        "claim_scope": [
-            "stock-lane UI runtime rendered",
-            "crypto-lane UI runtime rendered",
-            "paper execution paths exercised",
-            "read-only market observation semantics displayed",
-        ],
-        "does_not_prove": [
-            "live execution authority",
-            "external broker connectivity",
-            "real-money movement",
-        ],
-        "screenshots": [
-            {"name": name, "sha256": sha256_file(ARTIFACT_DIR / name)}
-            for name in screenshots
-        ],
+        "claim_scope": list(evidence.claims),
+        "does_not_prove": list(evidence.does_not_prove),
+        "screenshots": [artifact.to_dict() for artifact in artifacts],
+        "evidence": evidence.to_dict(),
     }
     (ARTIFACT_DIR / "proof-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
