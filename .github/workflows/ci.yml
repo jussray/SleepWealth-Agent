@@ -54,6 +54,9 @@ jobs:
       - name: External crypto observer boundaries
         run: pytest tests/test_external_crypto_sources.py -v --tb=short
 
+      - name: Pump evidence sandbox boundary
+        run: pytest tests/test_pump_live_sandbox.py -v --tb=short
+
       - name: Stock paper smoke test
         env:
           SLEEPWEALTH_MARKET_SOURCE: mock
@@ -178,6 +181,22 @@ jobs:
           cat /tmp/crypto-sandbox.log
           exit 1
 
+      - name: Start Pump evidence practice sandbox
+        env:
+          SLEEPWEALTH_CRYPTO_SANDBOX_CASH: "100"
+        run: |
+          python -m backend.pump_live_sandbox --host 127.0.0.1 --port 8768 >/tmp/pump-sandbox.log 2>&1 &
+          echo $! >/tmp/pump-sandbox.pid
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8768/health >/tmp/pump-sandbox-health.json; then
+              cat /tmp/pump-sandbox-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/pump-sandbox.log
+          exit 1
+
       - name: Playwright Sleep Wealth proof
         env:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -188,6 +207,12 @@ jobs:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           CRYPTO_SANDBOX_BASE_URL: http://127.0.0.1:8767/
         run: python tests/playwright_crypto_sandbox.py
+
+      - name: Playwright Pump evidence sandbox proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PUMP_SANDBOX_BASE_URL: http://127.0.0.1:8768/
+        run: python tests/playwright_pump_live_sandbox.py
 
       - name: Playwright MOM8 public preview proof
         env:
