@@ -2,27 +2,24 @@ import asyncio
 
 import typer
 
-from approvals.queue import ApprovalQueue
-from audit.logger import AuditLogger
-from broker.base import Order
+from backend.server import run_paper_dry_run
 from broker.factory import get_broker
-from engine.evaluator import ProposalEvaluator
 from engine.validator import RulesValidator
-from execution.executor import ExecutionManager
-from market.observation import observe_market
-from portfolio.tracker import PortfolioTracker
-from risk.gates import RiskGates
+from market import CRYPTO_LANE, STOCK_LANE, normalize_lane
 from rules import load_rules
 
 app = typer.Typer(help="Governed paper-trading simulator. Live execution is disabled.")
 
 
-async def _run(mode, broker, symbol, qty, side, auto_approve):
+async def _run(mode, broker, lane, symbol, qty, side, auto_approve):
     if mode != "paper":
-        typer.echo("[BLOCKED] SleepWealth is paper/simulation-only; live execution is disabled.")
+        typer.echo("[BLOCKED] Sleep Wealth is paper/simulation-only; live execution is disabled.")
         raise typer.Exit(1)
-    paper_only = True
+    if broker != "mock":
+        typer.echo("[BLOCKED] CLI execution is hard-bound to the mock broker.")
+        raise typer.Exit(1)
 
+    lane = normalize_lane(lane)
     rules = load_rules()
     ok, errors = RulesValidator().validate(rules)
     if not ok:
@@ -30,103 +27,86 @@ async def _run(mode, broker, symbol, qty, side, auto_approve):
         for err in errors:
             typer.echo(f"  - {err}")
         raise typer.Exit(1)
-    typer.echo(f"[RULES] v{rules['version']} valid | floor=${rules['floor_cash']} ceiling=${rules['ceiling']['current']}")
-
-    try:
-        broker_instance = get_broker(broker, paper_only=paper_only)
-    except ValueError as exc:
-        typer.echo(f"[ERROR] {exc}")
-        raise typer.Exit(1)
-
-    if not await broker_instance.connect():
-        typer.echo("[ERROR] broker connection failed")
-        raise typer.Exit(1)
-
-    portfolio = PortfolioTracker(broker_instance, min_cash_floor=rules["floor_cash"])
-    account = await portfolio.refresh()
-    typer.echo(f"[ACCOUNT] cash=${account.balance.cash:.2f} equity=${account.balance.equity:.2f}")
-
-    observation = await observe_market(
-        broker_instance,
-        symbol,
-        source=f"{broker}-market-observation",
-    )
-    typer.echo(
-        f"[MARKET] {observation.symbol} observed=${observation.price:.2f} "
-        f"source={observation.source} read_only={observation.read_only}"
-    )
-
-    evaluator = ProposalEvaluator(rules)
-    queue = ApprovalQueue()
-    audit = AuditLogger()
-    gates = RiskGates(broker_instance, portfolio, max_daily_loss=rules.get("max_daily_loss", 100.0))
-    executor = ExecutionManager(broker_instance, queue, audit, gates)
-
-    order = Order(symbol=symbol, qty=qty, side=side)
-    evaluation = evaluator.evaluate(order, account, price=observation.price)
-    typer.echo(f"[EVAL] allowed={evaluation['allowed']} risk={evaluation['risk_score']}% | {evaluation['reason']}")
-
-    if not evaluation["allowed"]:
-        await audit.log(
-            {
-                "event": "proposal_rejected_by_evaluator",
-                "reason": evaluation["reason"],
-                "market_observation": observation.to_dict(),
-            }
-        )
-        typer.echo("[REJECTED] evaluator blocked this order")
-        raise typer.Exit(1)
-
-    proposal_id = await executor.propose_order(order, evaluation)
-    typer.echo(f"[PROPOSAL] {proposal_id} pending approval")
 
     if not auto_approve:
-        typer.echo("[HOLD] run with --auto-approve, or approve manually in your own loop")
+        typer.echo("[HOLD] use --auto-approve only for this paper-only simulator cycle")
         return
 
-    queue.approve(proposal_id, "auto-approved (paper demo)")
-    result = await executor.execute_approved(proposal_id)
+    if not symbol:
+        symbol = "BTC-USD" if lane == CRYPTO_LANE else "AAPL"
 
-    if "error" in result:
-        typer.echo(f"[BLOCKED] {result['error']}")
+    typer.echo(
+        f"[LANE] {lane} | paper_only=true | broker=mock | "
+        f"live_execution=false"
+    )
+    result = await run_paper_dry_run(
+        symbol=symbol,
+        qty=qty,
+        side=side,
+        lane=lane,
+    )
+    typer.echo(
+        f"[MARKET] {result['market_observation']['symbol']} "
+        f"observed=${result['market_observation']['price']:.2f} "
+        f"lane={result['market_observation']['lane']} "
+        f"source={result['market_observation']['source']}"
+    )
+    typer.echo(
+        f"[EVAL] allowed={result['evaluation']['allowed']} "
+        f"risk={result['evaluation']['risk_score']}% | "
+        f"{result['evaluation']['reason']}"
+    )
+
+    if result["status"] != "executed":
+        typer.echo(f"[BLOCKED] {result.get('reason', result['status'])}")
         raise typer.Exit(1)
 
-    typer.echo(f"[EXECUTED] order_id={result['order_id']} status={result['status']}")
-
-    events = await audit.read(limit=5)
-    typer.echo(f"\n[AUDIT] last {len(events)} events:")
-    for ev in events:
-        typer.echo(f"  {ev['event']} :: {ev.get('reason') or ev.get('order_id') or ''}")
+    execution = result["execution"]
+    typer.echo(
+        f"[EXECUTED] order_id={execution['order_id']} "
+        f"status={execution['status']} classification={execution['fill_classification']}"
+    )
+    typer.echo(
+        f"[CONTINUITY] lane_cookie={result['continuity']['lane_cookie']} "
+        f"outcome_cookie={result['continuity']['outcome_cookie']}"
+    )
+    typer.echo("[TRUTH] paper simulation only; no real money moved")
 
 
 @app.command()
 def run(
     mode: str = typer.Option("paper", help="paper only; live execution is disabled"),
-    broker: str = typer.Option("mock", help="mock | alpaca"),
-    symbol: str = typer.Option("AAPL"),
-    qty: float = typer.Option(1),
+    broker: str = typer.Option("mock", help="mock only"),
+    lane: str = typer.Option(STOCK_LANE, help="stock-market | crypto"),
+    symbol: str = typer.Option("", help="defaults to AAPL for stocks or BTC-USD for crypto"),
+    qty: float = typer.Option(0.01),
     side: str = typer.Option("buy", help="buy | sell"),
-    auto_approve: bool = typer.Option(False, "--auto-approve", help="skip human approval (paper only)"),
+    auto_approve: bool = typer.Option(
+        False,
+        "--auto-approve",
+        help="record explicit approval for one paper-only simulator cycle",
+    ),
 ):
-    """Run one full OODA cycle: observe -> evaluate -> propose -> approve -> execute -> audit."""
-    if mode != "paper":
-        typer.echo("[BLOCKED] SleepWealth is paper/simulation-only; live execution is disabled.")
-        raise typer.Exit(1)
-    asyncio.run(_run(mode, broker, symbol, qty, side, auto_approve))
+    """Run one paper OODA cycle inside exactly one market lane."""
+    asyncio.run(_run(mode, broker, lane, symbol, qty, side, auto_approve))
 
 
 @app.command()
-def status(broker: str = typer.Option("mock")):
-    """Show account cash and equity."""
+def status(broker: str = typer.Option("mock", help="mock only")):
+    """Show the isolated mock account used for paper simulation."""
 
     async def _status():
-        b = get_broker(broker, paper_only=True)
-        if not await b.connect():
+        if broker != "mock":
+            typer.echo("[BLOCKED] status is hard-bound to the mock broker")
+            raise typer.Exit(1)
+        instance = get_broker("mock", paper_only=True)
+        if not await instance.connect():
             typer.echo("connection failed")
             raise typer.Exit(1)
-        acct = await b.get_account_summary()
-        typer.echo(f"cash:   ${acct.get('cash', 0):.2f}")
-        typer.echo(f"equity: ${acct.get('equity', 0):.2f}")
+        account = await instance.get_account_summary()
+        typer.echo(f"cash:   ${account.get('cash', 0):.2f}")
+        typer.echo(f"equity: ${account.get('equity', 0):.2f}")
+        typer.echo("live_execution: false")
 
     asyncio.run(_status())
 
