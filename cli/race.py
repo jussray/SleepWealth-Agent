@@ -8,7 +8,6 @@
 
 import argparse
 import asyncio
-import json
 
 from audit.logger import AuditLogger
 from gate.live_gate import LiveGate
@@ -43,8 +42,11 @@ async def cmd_series(args):
     harness = build(rules, args.audit)
     for n in range(args.races):
         seed = None if args.seed is None else args.seed + n
-        result = await harness.run_race(duration=args.duration, seed=seed,
-                                        verbose=not args.quiet)
+        result = await harness.run_race(
+            duration=args.duration,
+            seed=seed,
+            verbose=not args.quiet,
+        )
         patches = harness.cross_learn(result, verbose=not args.quiet)
         if args.quiet:
             print(result.render())
@@ -64,38 +66,41 @@ async def cmd_gate(args):
 
 def cmd_modes(_args):
     print("MODE STACK — every decision carries these tags\n")
-    for m in Mode:
-        print(f"  {m.value:<12} {m.__doc__ or ''}")
+    for mode in Mode:
+        print(f"  {mode.value:<12} {mode.__doc__ or ''}")
     print("\n  /futureyou is enforced at construction: a Decision without a")
     print("  forward-look raises TypeError. No forward-look, no move.")
 
 
 def main():
-    p = argparse.ArgumentParser(prog="race", description="Musk vs Gates $5 race harness")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    parser = argparse.ArgumentParser(
+        prog="race",
+        description="SleepWealth local simulation race harness",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("run", help="run one race")
-    r.add_argument("--duration", default="1h", choices=sorted(DURATIONS))
-    r.add_argument("--seed", type=int, default=None)
-    r.add_argument("--audit", default="audit.log")
-    r.set_defaults(fn=cmd_run, is_async=True)
+    run_parser = sub.add_parser("run", help="run one simulated race")
+    run_parser.add_argument("--duration", default="1h", choices=sorted(DURATIONS))
+    run_parser.add_argument("--seed", type=int, default=None)
+    run_parser.add_argument("--audit", default="audit.log")
+    run_parser.set_defaults(fn=cmd_run, is_async=True)
 
-    s = sub.add_parser("series", help="run several races with cross-learning between")
-    s.add_argument("--races", type=int, default=3)
-    s.add_argument("--duration", default="30m", choices=sorted(DURATIONS))
-    s.add_argument("--seed", type=int, default=None)
-    s.add_argument("--audit", default="audit.log")
-    s.add_argument("--quiet", action="store_true")
-    s.set_defaults(fn=cmd_series, is_async=True)
+    series = sub.add_parser("series", help="run several simulated races with cross-learning")
+    series.add_argument("--races", type=int, default=3)
+    series.add_argument("--duration", default="30m", choices=sorted(DURATIONS))
+    series.add_argument("--seed", type=int, default=None)
+    series.add_argument("--audit", default="audit.log")
+    series.add_argument("--quiet", action="store_true")
+    series.set_defaults(fn=cmd_series, is_async=True)
 
-    g = sub.add_parser("gate", help="evaluate the pre-live gate")
-    g.add_argument("--audit", default="audit.log")
-    g.set_defaults(fn=cmd_gate, is_async=True)
+    gate_parser = sub.add_parser("gate", help="evaluate the simulation governance gate")
+    gate_parser.add_argument("--audit", default="audit.log")
+    gate_parser.set_defaults(fn=cmd_gate, is_async=True)
 
-    m = sub.add_parser("modes", help="show the mode stack")
-    m.set_defaults(fn=cmd_modes, is_async=False)
+    modes = sub.add_parser("modes", help="show the mode stack")
+    modes.set_defaults(fn=cmd_modes, is_async=False)
 
-    args = p.parse_args()
+    args = parser.parse_args()
     if getattr(args, "is_async", False):
         asyncio.run(args.fn(args))
     else:
