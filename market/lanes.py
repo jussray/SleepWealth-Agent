@@ -10,6 +10,10 @@ LANE_FIXTURE_TYPES = {
     STOCK_LANE: "EQUITY",
     CRYPTO_LANE: "CRYPTOCURRENCY",
 }
+LANE_FIXTURE_SYMBOLS = {
+    STOCK_LANE: frozenset({"AAPL", "MSFT", "VTI"}),
+    CRYPTO_LANE: frozenset({"BTC-USD", "ETH-USD", "SOL-USD"}),
+}
 
 
 def normalize_lane(value: str | None) -> str:
@@ -29,8 +33,18 @@ def get_lane_rules(rules: dict, lane: str) -> dict:
     return config
 
 
+def _fixture_lane_for_symbol(symbol: str) -> str:
+    normalized = str(symbol).strip().upper()
+    for lane, symbols in LANE_FIXTURE_SYMBOLS.items():
+        if normalized in symbols:
+            return lane
+    raise ValueError(
+        f"{normalized or 'market symbol'} is not available in the mock market fixture catalog"
+    )
+
+
 class LaneBoundFixtureProvider:
-    """Attach deterministic lane metadata to the mock quote feed used by CI and Playwright."""
+    """Use a fixed fixture catalog; the request never decides a symbol's lane."""
 
     def __init__(self, provider: Any, lane: str):
         self.provider = provider
@@ -41,7 +55,13 @@ class LaneBoundFixtureProvider:
 
     async def get_market_data(self, symbol: str) -> dict:
         data = dict(await self.provider.get_market_data(symbol))
-        data["lane"] = self.lane
-        data["instrument_type"] = LANE_FIXTURE_TYPES[self.lane]
-        data["crypto_native"] = self.lane == CRYPTO_LANE
+        fixture_lane = _fixture_lane_for_symbol(symbol)
+        if fixture_lane != self.lane:
+            raise ValueError(
+                f"{str(symbol).strip().upper()} is classified as {fixture_lane}, "
+                f"not requested lane {self.lane}"
+            )
+        data["lane"] = fixture_lane
+        data["instrument_type"] = LANE_FIXTURE_TYPES[fixture_lane]
+        data["crypto_native"] = fixture_lane == CRYPTO_LANE
         return data
