@@ -213,6 +213,14 @@ jobs:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python tests/playwright_sleepwealth.py
 
+      - name: Independently verify Sleep Wealth proof manifest
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python -m evidence.proof_verifier artifacts/proof-manifest.json \
+            --expected-sha "$EXPECTED_HEAD_SHA" \
+            --receipt artifacts/proof-verification.json
+
       - name: Playwright crypto sandbox wallet proof
         env:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
