@@ -186,12 +186,14 @@ def test_weak_profitable_cycle_breaks_history_streak():
     assert result["suggested_next_limit"] == 20.0
 
 
-def test_history_reports_velocity_profit_and_empty_state():
+def test_history_reports_normalized_compounding_metrics_and_empty_state():
     policy = CapitalLadder(rules())
     empty = policy.assess_history([])
 
     assert empty["cycles"] == 0
-    assert empty["capital_velocity_per_day"] == 0.0
+    assert empty["net_roi_pct"] == 0.0
+    assert empty["profit_per_capital_day_pct"] == 0.0
+    assert empty["ceiling_turns_per_day"] == 0.0
     assert empty["latest_status"] == "no_data"
 
     result = policy.assess_history(
@@ -203,7 +205,46 @@ def test_history_reports_velocity_profit_and_empty_state():
 
     assert result["total_deployed"] == 17.0
     assert result["total_net_profit"] == 5.0
-    assert result["capital_velocity_per_day"] == 5.67
+    assert result["net_roi_pct"] == 29.41
+    assert result["normalized_elapsed_days"] == 3
+    assert result["capital_days"] == 28.0
+    assert result["deployed_capital_per_day"] == 5.67
+    assert result["profit_per_capital_day_pct"] == 17.8571
+    assert result["ceiling_turns"] == 0.85
+    assert result["ceiling_turns_per_day"] == 0.2833
+
+
+def test_velocity_rate_is_scale_invariant():
+    small_rules = rules()
+    large_rules = rules()
+    small_rules["ceiling"]["current"] = 20.0
+    large_rules["ceiling"]["current"] = 200.0
+    large_rules["ceiling"]["max"] = 200.0
+
+    small = CapitalLadder(small_rules).assess_history(
+        [FlipCycle(10.0, 12.0, days_held=2)]
+    )
+    large = CapitalLadder(large_rules).assess_history(
+        [FlipCycle(100.0, 120.0, days_held=2)]
+    )
+
+    assert small["net_roi_pct"] == large["net_roi_pct"] == 20.0
+    assert (
+        small["profit_per_capital_day_pct"]
+        == large["profit_per_capital_day_pct"]
+        == 10.0
+    )
+
+
+def test_zero_day_cycle_uses_one_day_floor_for_rate_metrics():
+    result = CapitalLadder(rules()).assess_history(
+        [FlipCycle(10.0, 12.0, days_held=0)]
+    )
+
+    assert result["normalized_elapsed_days"] == 1
+    assert result["capital_days"] == 10.0
+    assert result["deployed_capital_per_day"] == 10.0
+    assert result["profit_per_capital_day_pct"] == 20.0
 
 
 def test_history_rejects_unvalidated_cycle_evidence():
