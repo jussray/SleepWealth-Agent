@@ -4,6 +4,12 @@ A governed trading agent. The machine proposes; the human owns the ceiling.
 
 Paper/simulation only. Live execution is disabled at both the CLI and broker-factory layers.
 
+## Public token identity
+
+The approved public token branding identity for the crypto lane is **MOM OF 8 / MOM8**. The canonical machine-readable record lives at `identity/mom8-public-token.json`.
+
+That approval is branding-only. It does not authorize token launch, minting, wallet access, trading, spending, transfers, or any other live-money action. Those remain separate authority gates and receipts.
+
 ## Why this exists
 
 Most "AI trading bot" designs fail in the same place: the action layer has more authority
