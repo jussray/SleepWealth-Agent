@@ -180,7 +180,10 @@ class CapitalLadder:
 
         Historical proof is derived from the supplied cycles in order. A non-qualifying
         cycle breaks the consecutive-win streak; a pause/block status also stops promotion.
-        No result mutates the configured ceiling.
+        Velocity metrics are normalized for both deployed capital and time so merely making
+        a cycle larger cannot improve the rate. Same-day cycles count as one elapsed day
+        for rate metrics to avoid zero-time inflation. No result mutates the configured
+        ceiling.
         """
         if not isinstance(cycles, list):
             raise TypeError("cycles must be a list of FlipCycle values")
@@ -193,15 +196,18 @@ class CapitalLadder:
         failed_count = 0
         total_cost = 0.0
         total_profit = 0.0
-        total_days = 0
+        normalized_days = 0
+        capital_days = 0.0
         assessments: list[dict] = []
 
         for cycle in cycles:
             result = self.assess(cycle, prior_qualified_wins=streak)
             assessments.append(result)
+            elapsed_days = max(cycle.days_held, 1)
             total_cost += cycle.total_cost
             total_profit += cycle.net_profit
-            total_days += cycle.days_held
+            normalized_days += elapsed_days
+            capital_days += cycle.total_cost * elapsed_days
             profitable_count += int(cycle.net_profit > 0)
 
             if result["qualified"]:
@@ -214,7 +220,19 @@ class CapitalLadder:
         cycle_count = len(cycles)
         failure_rate_pct = (failed_count / cycle_count * 100.0) if cycle_count else 0.0
         win_rate_pct = (profitable_count / cycle_count * 100.0) if cycle_count else 0.0
-        capital_velocity_per_day = total_cost / max(total_days, 1) if cycle_count else 0.0
+        net_roi_pct = (total_profit / total_cost * 100.0) if total_cost else 0.0
+        deployed_capital_per_day = (
+            total_cost / normalized_days if normalized_days else 0.0
+        )
+        profit_per_capital_day_pct = (
+            total_profit / capital_days * 100.0 if capital_days else 0.0
+        )
+        ceiling_turns = (
+            total_cost / self.current_limit if self.current_limit > 0 else 0.0
+        )
+        ceiling_turns_per_day = (
+            ceiling_turns / normalized_days if normalized_days else 0.0
+        )
         latest = assessments[-1] if assessments else None
 
         promotion_ready = bool(
@@ -236,7 +254,13 @@ class CapitalLadder:
             "win_rate_pct": round(win_rate_pct, 2),
             "total_deployed": round(total_cost, 2),
             "total_net_profit": round(total_profit, 2),
-            "capital_velocity_per_day": round(capital_velocity_per_day, 2),
+            "net_roi_pct": round(net_roi_pct, 2),
+            "normalized_elapsed_days": normalized_days,
+            "capital_days": round(capital_days, 2),
+            "deployed_capital_per_day": round(deployed_capital_per_day, 2),
+            "profit_per_capital_day_pct": round(profit_per_capital_day_pct, 4),
+            "ceiling_turns": round(ceiling_turns, 4),
+            "ceiling_turns_per_day": round(ceiling_turns_per_day, 4),
             "promotion_ready": promotion_ready,
             "effective_limit": round(self.current_limit, 2),
             "suggested_next_limit": round(float(suggested_next_limit), 2),
