@@ -114,7 +114,10 @@ async def _run(mode, broker, symbol, qty, side, auto_approve):
 @app.command()
 def run(
     mode: str = typer.Option("paper", help="paper only; live execution is disabled"),
-    broker: str = typer.Option("mock", help="mock | alpaca"),
+    broker: str = typer.Option(
+        "mock",
+        help="mock only; external broker execution is disabled",
+    ),
     symbol: str = typer.Option("AAPL"),
     qty: float = typer.Option(1),
     side: str = typer.Option("buy", help="buy | sell"),
@@ -188,7 +191,7 @@ def ladder(
 
 @app.command()
 def validate():
-    """Validate rules.json against the schema contract."""
+    """Validate rules.json against the repository safety contract."""
     ok, errors = RulesValidator().validate(load_rules())
     if ok:
         typer.echo("rules.json OK")
