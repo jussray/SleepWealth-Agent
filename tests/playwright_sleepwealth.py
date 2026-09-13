@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -141,12 +142,22 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+def git_head_sha():
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True
+    ).strip()
+
+
 def write_proof_manifest():
     github_actions = os.getenv("GITHUB_ACTIONS") == "true"
-    commit_sha = os.getenv("GITHUB_SHA", "local")
+    tested_sha = git_head_sha()
+    source_sha = os.getenv("SLEEPWEALTH_PROOF_SOURCE_SHA", tested_sha)
+    event_sha = os.getenv("GITHUB_SHA")
     if github_actions:
-        assert len(commit_sha) == 40
-        assert all(char in "0123456789abcdef" for char in commit_sha.lower())
+        for sha in (tested_sha, source_sha, event_sha):
+            assert sha is not None and len(sha) == 40
+            assert all(char in "0123456789abcdef" for char in sha.lower())
+        assert tested_sha == source_sha
 
     screenshots = [
         "sleepwealth-stock-desktop.png",
@@ -156,7 +167,10 @@ def write_proof_manifest():
     ]
     manifest = {
         "schema": "sleepwealth-playwright-proof-v1",
-        "commit_sha": commit_sha,
+        "tested_sha": tested_sha,
+        "source_sha": source_sha,
+        "github_event_sha": event_sha,
+        "github_event_name": os.getenv("GITHUB_EVENT_NAME"),
         "github_run_id": os.getenv("GITHUB_RUN_ID"),
         "repository": os.getenv("GITHUB_REPOSITORY"),
         "proof_type": "playwright-ui-runtime",
