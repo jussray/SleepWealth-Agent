@@ -1,5 +1,5 @@
 class RulesValidator:
-    """Minimal, dependency-free rules validation. Lindy: no ajv, no jsonschema."""
+    """Dependency-free validation for the repository's explicit safety contract."""
 
     def validate(self, rules: dict) -> tuple[bool, list[str]]:
         errors: list[str] = []
