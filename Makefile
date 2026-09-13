@@ -8,9 +8,9 @@ help:
 	@echo "  make lint        ruff static checks"
 	@echo "  make format      black formatting"
 	@echo "  make validate    validate rules.json against schema"
-	@echo "  make run-paper   one paper cycle against the mock broker
-	@echo "  make run-paper-blocked  show the ceiling refusing an oversized order""
-	@echo "  make run-live    live mode (interactive confirm, no auto-approve)"
+	@echo "  make run-paper   one paper cycle against the mock broker"
+	@echo "  make run-paper-blocked  show the ceiling refusing an oversized order"
+	@echo "  make run-live    show the live-mode refusal (always fails)"
 	@echo "  make clean       remove caches and build artifacts"
 
 setup:
@@ -57,7 +57,7 @@ race-series:     ## four races with cross-learning between each
 race-long:       ## one long race
 	python -m cli.race run --duration 1d
 
-gate:            ## evaluate the pre-live gate
+gate:            ## evaluate the simulation governance gate
 	python -m cli.race gate
 
 modes:           ## show the mode stack
