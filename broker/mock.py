@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import isfinite
 from typing import List
 
 from .base import BaseBroker, Order, Position
@@ -29,8 +30,8 @@ class MockBroker(BaseBroker):
 
     def set_market_price(self, symbol: str, price: float) -> None:
         price = float(price)
-        if price <= 0:
-            raise ValueError("mock market price must be greater than zero")
+        if not isfinite(price) or price <= 0:
+            raise ValueError("mock market price must be finite and greater than zero")
         self.market_prices[str(symbol).upper()] = price
 
     async def connect(self) -> bool:
@@ -100,8 +101,8 @@ class MockBroker(BaseBroker):
         return {
             "symbol": symbol,
             "price": price,
-            "bid": price - 0.5,
-            "ask": price + 0.5,
+            "bid": price,
+            "ask": price,
             "timestamp": datetime.now(timezone.utc),
             "source_name": self.source_name,
             "source_classification": self.source_classification,
