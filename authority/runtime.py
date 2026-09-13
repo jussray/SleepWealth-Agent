@@ -49,7 +49,7 @@ class AuthorityRequest:
     evidence: EvidenceObjectV1
     current_source_sha: str
     execution_mode: str
-    grant: AuthorityGrant | None = None
+    grant_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +63,7 @@ class AuthorityDecision:
     execution_mode: str
     evidence_fingerprint: str
     grant_id: str | None
-    authority_source: str = "independent-grant"
+    authority_source: str = "trusted-runtime-registry"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -81,16 +81,22 @@ class AuthorityDecision:
 
 
 class AuthorityRuntime:
-    """Consumes evidence without allowing evidence to create authority.
+    """Consumes evidence without allowing evidence or requests to create authority.
 
-    The runtime exposes only read-only and paper-simulation effects. Repository
-    execution mode is checked independently from the grant. Real-money, wallet,
-    funding, transfer, mint, and live trading effects are not representable.
+    Trusted grants are injected into the runtime, never supplied as request
+    payloads. The runtime exposes only read-only and paper-simulation effects.
+    Repository execution mode is checked independently from the grant. Real-money,
+    wallet, funding, transfer, mint, and live trading effects are not representable.
     """
+
+    def __init__(self, trusted_grants: tuple[AuthorityGrant, ...] = ()) -> None:
+        grant_ids = [grant.grant_id for grant in trusted_grants]
+        if len(grant_ids) != len(set(grant_ids)):
+            raise ValueError("trusted grant ids must be unique")
+        self._trusted_grants = {grant.grant_id: grant for grant in trusted_grants}
 
     def evaluate(self, request: AuthorityRequest) -> AuthorityDecision:
         evidence = request.evidence
-        grant = request.grant
 
         try:
             mode = get_execution_mode(request.execution_mode)
@@ -116,8 +122,12 @@ class AuthorityRuntime:
             return deny(f"{mode.name} mode is observation-only")
         if request.effect is EffectClass.READ_ONLY and mode.market_observation != "read-only":
             return deny(f"{mode.name} mode does not permit read-only observation")
+        if request.grant_id is None:
+            return deny("trusted authority grant id is required")
+
+        grant = self._trusted_grants.get(request.grant_id)
         if grant is None:
-            return deny("independent authority grant is required")
+            return deny("authority grant is not trusted by this runtime")
         if grant.subject != request.subject:
             return deny("authority grant subject does not match requested subject")
         if request.action not in grant.allowed_actions:
@@ -129,7 +139,7 @@ class AuthorityRuntime:
 
         return AuthorityDecision(
             allowed=True,
-            reason="current evidence, execution mode, and independent authority permit the requested action",
+            reason="current evidence, execution mode, and trusted authority permit the requested action",
             action=request.action,
             subject=request.subject,
             consequence=request.consequence,
@@ -154,5 +164,5 @@ class AuthorityRuntime:
             effect=request.effect,
             execution_mode=execution_mode or str(request.execution_mode),
             evidence_fingerprint=request.evidence.fingerprint,
-            grant_id=request.grant.grant_id if request.grant else None,
+            grant_id=request.grant_id,
         )
