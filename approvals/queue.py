@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - persistent mode fails closed below
 
 
 STATE_VERSION = 1
+STATE_SEAL_ALGORITHM = "sha256"
 
 
 class ApprovalStatus(str, Enum):
@@ -55,6 +56,15 @@ def _json_copy(value):
     return json.loads(json.dumps(value, default=str))
 
 
+def _canonical_state_payload(payload: dict) -> bytes:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return canonical.encode("utf-8")
+
+
+def _state_seal(payload: dict) -> str:
+    return hashlib.sha256(_canonical_state_payload(payload)).hexdigest()
+
+
 @dataclass
 class ApprovalRequest:
     proposal_id: str
@@ -75,9 +85,10 @@ class ApprovalRequest:
 class ApprovalQueue:
     """Human-in-the-loop gate for simulated actions.
 
-    When state_path is set, proposal state is atomically persisted. Approval and
-    in-flight execution are session-bound so restarts fail closed instead of
-    replaying unfinished work.
+    When state_path is set, proposal state is atomically persisted and self-sealed.
+    Approval and in-flight execution are session-bound so restarts fail closed instead
+    of replaying unfinished work. The SHA-256 seal detects accidental or local file
+    tampering; it is an integrity check, not an authentication secret.
     """
 
     def __init__(self, state_path: str | None = None, session_id: str | None = None):
@@ -166,10 +177,24 @@ class ApprovalQueue:
             self._counter = 0
             return
         try:
-            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            envelope = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"approval state is unreadable: {exc}") from exc
-        if not isinstance(payload, dict) or payload.get("version") != STATE_VERSION:
+        if not isinstance(envelope, dict):
+            raise RuntimeError("approval state envelope is invalid")
+        payload = envelope.get("payload")
+        seal = envelope.get("seal")
+        if not isinstance(payload, dict) or not isinstance(seal, dict):
+            raise RuntimeError("approval state seal envelope is missing")
+        if seal.get("algorithm") != STATE_SEAL_ALGORITHM:
+            raise RuntimeError("approval state seal algorithm is missing or unsupported")
+        expected = seal.get("digest")
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise RuntimeError("approval state seal digest is invalid")
+        actual = _state_seal(payload)
+        if not hashlib.compare_digest(expected, actual):
+            raise RuntimeError("approval state integrity check failed")
+        if payload.get("version") != STATE_VERSION:
             raise RuntimeError("approval state version is missing or unsupported")
         requests = payload.get("requests")
         counter = payload.get("counter")
@@ -191,7 +216,16 @@ class ApprovalQueue:
             "counter": self._counter,
             "requests": [self._serialize_request(request) for request in self.queue],
         }
-        encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        envelope = {
+            "payload": payload,
+            "seal": {
+                "algorithm": STATE_SEAL_ALGORITHM,
+                "digest": _state_seal(payload),
+            },
+        }
+        encoded = (json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
         temp_path = self.state_path.with_name(
             f".{self.state_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         )
