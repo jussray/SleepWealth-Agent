@@ -12,6 +12,7 @@ from authority import (
     EffectClass,
 )
 from evidence import EvidenceArtifact, EvidenceObjectV1
+from gate import live_money_readiness, prepare_human_live_review
 from playwright.sync_api import expect, sync_playwright
 
 BASE_URL = os.getenv("SLEEPWEALTH_BASE_URL", "http://127.0.0.1:8765")
@@ -216,6 +217,22 @@ def write_proof_manifest():
     )
     assert authority_decision.allowed is True
 
+    readiness = live_money_readiness()
+    human_review = prepare_human_live_review(
+        evidence,
+        readiness,
+        current_source_sha=tested_sha,
+    )
+    human_review_payload = human_review.to_dict()
+    assert readiness["execution_authorized"] is False
+    assert human_review_payload["manual_review_required"] is True
+    assert human_review_payload["execution_authorized"] is False
+    assert human_review_payload["submit_capability"] is False
+    assert human_review_payload["money_movement_capability"] is False
+    assert human_review_payload["contains_order_instructions"] is False
+    assert human_review_payload["evidence_fingerprint"] == evidence.fingerprint
+    assert human_review_payload["readiness_fingerprint"] == readiness["fingerprint"]
+
     manifest = {
         "schema": "sleepwealth-playwright-proof-v1",
         "tested_sha": tested_sha,
@@ -234,6 +251,8 @@ def write_proof_manifest():
         "screenshots": [artifact.to_dict() for artifact in artifacts],
         "evidence": evidence.to_dict(),
         "authority_decision": authority_decision.to_dict(),
+        "live_money_readiness": readiness,
+        "human_live_review": human_review_payload,
     }
     (ARTIFACT_DIR / "proof-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
