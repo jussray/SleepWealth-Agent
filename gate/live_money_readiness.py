@@ -1,9 +1,9 @@
 """Machine-readable live-money readiness truth for Sleep Wealth.
 
 This module reports the repository's current execution ceiling. It does not
-accept caller-supplied flags that could be mistaken for authority, and it never
-grants execution authority. External brokerage/account state remains UNKNOWN
-until a separately verified runtime receipt exists.
+accept caller-supplied booleans that could be mistaken for authority, and it
+never grants execution authority. External brokerage/account observations may
+be attached as evidence, but they cannot satisfy execution gates by themselves.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from authority.runtime import EffectClass
 from broker.factory import KNOWN_BROKERS
@@ -42,7 +42,60 @@ def _fingerprint(checks: Iterable[ReadinessCheck]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def live_money_readiness() -> dict[str, object]:
+def _observer_evidence(receipt: Mapping[str, object] | None) -> dict[str, object]:
+    """Validate a non-authorizing external observer receipt.
+
+    Even a valid receipt proves observation only. It never changes a live-money
+    blocker from BLOCKED/UNKNOWN to VERIFIED.
+    """
+
+    if receipt is None:
+        return {
+            "classification": "UNKNOWN",
+            "accepted": False,
+            "reason": "no read-only external account observer receipt supplied",
+        }
+
+    supplied_fingerprint = str(receipt.get("fingerprint", ""))
+    payload = dict(receipt)
+    payload.pop("fingerprint", None)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    calculated_fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    invariants_ok = (
+        receipt.get("event") == "ibkr_readonly_session_observed"
+        and receipt.get("classification") == "OBSERVED"
+        and receipt.get("connected") is True
+        and receipt.get("execution_authorized") is False
+        and receipt.get("readonly_requested") is True
+        and receipt.get("loopback_only") is True
+        and supplied_fingerprint == calculated_fingerprint
+    )
+    if not invariants_ok:
+        return {
+            "classification": "INVALID",
+            "accepted": False,
+            "reason": "external observer receipt failed integrity or non-authority invariants",
+        }
+
+    return {
+        "classification": "VERIFIED_OBSERVATION",
+        "accepted": True,
+        "reason": (
+            "read-only local session evidence is internally consistent; provider-side read-only "
+            "enforcement and real-money execution authority remain unproved"
+        ),
+        "fingerprint": supplied_fingerprint,
+        "account_count": receipt.get("account_count", 0),
+        "provider_readonly_enforcement": receipt.get(
+            "provider_readonly_enforcement", "UNKNOWN"
+        ),
+    }
+
+
+def live_money_readiness(
+    external_observer_receipt: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     """Return a fail-closed readiness receipt derived from executable repo truth.
 
     The receipt intentionally separates each blocker. Evidence/fingerprints are
@@ -55,6 +108,8 @@ def live_money_readiness() -> dict[str, object]:
         for effect in EffectClass
     )
     external_brokers = tuple(name for name in KNOWN_BROKERS if name != "mock")
+    observer = _observer_evidence(external_observer_receipt)
+    observer_seen = observer.get("classification") == "VERIFIED_OBSERVATION"
 
     checks = (
         ReadinessCheck(
@@ -91,7 +146,10 @@ def live_money_readiness() -> dict[str, object]:
             code="LIVE_BROKER_SESSION_RECEIPT",
             classification="UNKNOWN",
             reason=(
-                "no independently verified live brokerage/account session receipt is bound "
+                "a read-only IBKR session was observed, but observation is not proof of an "
+                "authorized live execution session"
+                if observer_seen
+                else "no independently verified live brokerage/account session receipt is bound "
                 "to this runtime"
             ),
             source="external-runtime-evidence",
@@ -106,6 +164,7 @@ def live_money_readiness() -> dict[str, object]:
         "authority_ceiling": live_mode.authority_ceiling,
         "checks": [check.to_dict() for check in checks],
         "blockers": [check.code for check in checks if check.classification != "VERIFIED"],
+        "external_readonly_observer": observer,
         "fingerprint": _fingerprint(checks),
         "truth": (
             "This receipt describes current state only. It never grants, renews, or "

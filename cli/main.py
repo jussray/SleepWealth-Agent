@@ -6,8 +6,10 @@ import typer
 
 from backend.server import run_paper_dry_run
 from broker.factory import get_broker
+from broker.ibkr_readonly import IBKRReadOnlyObserver, IBKRReadOnlyObserverError
 from engine.capital_ladder import CapitalLadder, FlipCycle
 from engine.validator import RulesValidator
+from gate.live_money_readiness import live_money_readiness
 from market import CRYPTO_LANE, STOCK_LANE, LaneBoundFixtureProvider, normalize_lane
 from rules import load_rules
 
@@ -121,6 +123,57 @@ def status(broker: str = typer.Option("mock", help="mock only")):
         typer.echo("live_execution: false")
 
     asyncio.run(_status())
+
+
+@app.command("ibkr-readonly-receipt")
+def ibkr_readonly_receipt(
+    host: str = typer.Option("127.0.0.1", help="loopback TWS / IB Gateway host only"),
+    port: int = typer.Option(4002, min=1, max=65535, help="local TWS / IB Gateway API port"),
+    client_id: int = typer.Option(91, min=1, help="nonzero observer client id"),
+    timeout: float = typer.Option(4.0, min=0.1, help="connection timeout in seconds"),
+):
+    """Observe a local IBKR session and emit a privacy-preserving readiness receipt.
+
+    This command has no order, transfer, funding, signing, or credential inputs.
+    It cannot authorize live execution.
+    """
+
+    async def _observe():
+        observer = IBKRReadOnlyObserver(
+            host=host,
+            port=port,
+            client_id=client_id,
+            timeout=timeout,
+        )
+        try:
+            receipt = await observer.observe()
+        except IBKRReadOnlyObserverError as exc:
+            typer.echo(
+                json.dumps(
+                    {
+                        "event": "ibkr_readonly_session_observation_failed",
+                        "classification": "BLOCKED",
+                        "execution_authorized": False,
+                        "reason": str(exc),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            raise typer.Exit(1)
+
+        typer.echo(
+            json.dumps(
+                {
+                    "observer_receipt": receipt,
+                    "live_money_readiness": live_money_readiness(receipt),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+
+    asyncio.run(_observe())
 
 
 @app.command()
