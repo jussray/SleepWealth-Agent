@@ -181,8 +181,9 @@ jobs:
         env:
           SLEEPWEALTH_MARKET_SOURCE: mock
           SLEEPWEALTH_AUDIT_LOG: /tmp/sleepwealth-audit.log
+          SLEEPWEALTH_RUNTIME_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python -m backend.server --host 127.0.0.1 --port 8765 >/tmp/sleepwealth-backend.log 2>&1 &
+          python -m backend.runtime_server --host 127.0.0.1 --port 8765 >/tmp/sleepwealth-backend.log 2>&1 &
           echo $! >/tmp/sleepwealth-backend.pid
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8765/health >/tmp/sleepwealth-health.json; then
@@ -223,6 +224,11 @@ jobs:
           done
           cat /tmp/crypto-sandbox.log
           exit 1
+
+      - name: Playwright runtime identity proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python tests/playwright_runtime_identity.py
 
       - name: Playwright Sleep Wealth proof
         env:
