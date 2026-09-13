@@ -162,12 +162,15 @@ class CuratorDebrief:
         return out
 
     def ooda(self) -> List[str]:
-        w, l = self.result.winner, self.result.loser
+        winner, loser = self.result.winner, self.result.loser
         out = ["Observe: race scored on return % of stake."]
-        if w and l:
-            out.append(f"Orient: {w.engine} {w.return_pct:+.2f}% vs {l.engine} {l.return_pct:+.2f}%.")
+        if winner and loser:
             out.append(
-                f"Decide: the open question is whether {w.engine}'s edge is style or "
+                f"Orient: {winner.engine} {winner.return_pct:+.2f}% vs "
+                f"{loser.engine} {loser.return_pct:+.2f}%."
+            )
+            out.append(
+                f"Decide: the open question is whether {winner.engine}'s edge is style or "
                 "window. One more race at the same duration answers it."
             )
         else:
