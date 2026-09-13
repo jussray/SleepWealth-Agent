@@ -65,8 +65,9 @@ async def test_exact_live_price_and_bound_mint_mirror_into_existing_crypto_sandb
 
 @pytest.mark.asyncio
 async def test_same_market_snapshot_with_different_mint_has_different_pump_fingerprint():
-    first = await PumpShadowBridge.observe(snapshot(mint="PumpMintA"))
-    second = await PumpShadowBridge.observe(snapshot(mint="PumpMintB"))
+    observed_at = datetime.now(timezone.utc).isoformat()
+    first = await PumpShadowBridge.observe(snapshot(mint="PumpMintA", timestamp=observed_at))
+    second = await PumpShadowBridge.observe(snapshot(mint="PumpMintB", timestamp=observed_at))
 
     assert first.market_fingerprint == second.market_fingerprint
     assert first.fingerprint != second.fingerprint
