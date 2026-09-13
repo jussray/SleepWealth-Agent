@@ -148,7 +148,15 @@ def write_proof_manifest():
         assert len(commit_sha) == 40
         assert all(char in "0123456789abcdef" for char in commit_sha.lower())
 
-    screenshots = ["sleepwealth-desktop.png", "sleepwealth-mobile.png"]
+    screenshots = [
+        "sleepwealth-stock-desktop.png",
+        "sleepwealth-crypto-desktop.png",
+        "sleepwealth-stock-mobile.png",
+        "sleepwealth-crypto-mobile.png",
+    ]
+    missing = [name for name in screenshots if not (ARTIFACT_DIR / name).is_file()]
+    assert not missing, f"missing required Playwright proof screenshots: {missing}"
+
     manifest = {
         "schema": "sleepwealth-playwright-proof-v1",
         "commit_sha": commit_sha,
