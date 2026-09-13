@@ -58,7 +58,11 @@ class PumpSnapshotProvider:
         if not isinstance(snapshot, dict):
             raise ValueError("pump snapshot must be a mapping")
         required = ("mint", "symbol", "price", "timestamp", "source", "source_classification")
-        missing = [key for key in required if not snapshot.get(key)]
+        missing = [
+            key
+            for key in required
+            if key not in snapshot or snapshot[key] is None or snapshot[key] == ""
+        ]
         if missing:
             raise ValueError(f"pump snapshot missing: {', '.join(missing)}")
         source_classification = str(snapshot["source_classification"]).strip().lower()
