@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import isfinite
 
 
 @dataclass(frozen=True)
@@ -19,11 +20,13 @@ class FlipCycle:
             "other_costs": self.other_costs,
         }
         for name, value in numeric.items():
-            if not isinstance(value, (int, float)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"{name} must be numeric")
+            if not isfinite(float(value)):
+                raise ValueError(f"{name} must be finite")
             if value < 0:
                 raise ValueError(f"{name} must be >= 0")
-        if not isinstance(self.days_held, int):
+        if isinstance(self.days_held, bool) or not isinstance(self.days_held, int):
             raise TypeError("days_held must be an integer")
         if self.days_held < 0:
             raise ValueError("days_held must be >= 0")
@@ -69,6 +72,18 @@ class CapitalLadder:
         self.max_step_multiplier = float(config.get("max_step_multiplier", 1.5))
         self.max_cycle_loss_pct = float(config.get("max_cycle_loss_pct", 20.0))
 
+        finite_config = {
+            "ceiling.current": self.current_limit,
+            "ceiling.max": self.max_limit,
+            "capital_ladder.min_net_margin_pct": self.min_net_margin_pct,
+            "capital_ladder.protected_profit_pct": self.protected_profit_pct,
+            "capital_ladder.max_step_multiplier": self.max_step_multiplier,
+            "capital_ladder.max_cycle_loss_pct": self.max_cycle_loss_pct,
+        }
+        for name, value in finite_config.items():
+            if not isfinite(value):
+                raise ValueError(f"{name} must be finite")
+
         if self.current_limit < 0 or self.max_limit < self.current_limit:
             raise ValueError("ceiling max must be >= current and both must be non-negative")
         if self.min_net_margin_pct < 0:
@@ -85,7 +100,7 @@ class CapitalLadder:
             raise ValueError("max_cycle_loss_pct must be > 0")
 
     def assess(self, cycle: FlipCycle, prior_qualified_wins: int = 0) -> dict:
-        if not isinstance(prior_qualified_wins, int) or prior_qualified_wins < 0:
+        if isinstance(prior_qualified_wins, bool) or not isinstance(prior_qualified_wins, int) or prior_qualified_wins < 0:
             raise ValueError("prior_qualified_wins must be a non-negative integer")
 
         total_cost = cycle.total_cost
