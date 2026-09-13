@@ -219,6 +219,12 @@ jobs:
           CRYPTO_SANDBOX_BASE_URL: http://127.0.0.1:8767/
         run: python tests/playwright_crypto_sandbox.py
 
+      - name: Playwright Pump Live Box proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PUMP_LIVE_BOX_BASE_URL: http://127.0.0.1:8768/
+        run: python tests/playwright_pump_live_box.py
+
       - name: Playwright MOM8 public preview proof
         env:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
