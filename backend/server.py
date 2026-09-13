@@ -30,6 +30,9 @@ from risk.gates import RiskGates
 from rules import load_rules
 
 
+_STOCK_UNIVERSE_PROVIDER = NasdaqTraderUniverseProvider()
+
+
 DASHBOARD_HTML = """<!doctype html>
 <html lang="en" data-theme="night-mineral">
 <head>
@@ -263,7 +266,7 @@ async def _verify_lane_observation(lane: str, observation, universe_provider=Non
 
     receipt["scope"] = "us-listed-directory"
     if observation.source_classification == "external-public-delayed":
-        directory = universe_provider or NasdaqTraderUniverseProvider()
+        directory = universe_provider or _STOCK_UNIVERSE_PROVIDER
         listed = await directory.resolve(observation.symbol)
         if listed is None:
             raise ValueError(
@@ -329,7 +332,7 @@ async def observe_approved_markets(market_provider=None) -> dict:
 
 
 async def search_stock_universe(query="", limit=25, universe_provider=None) -> dict:
-    provider = universe_provider or NasdaqTraderUniverseProvider()
+    provider = universe_provider or _STOCK_UNIVERSE_PROVIDER
     rows = await provider.search(query, limit)
     return {
         "status": "ok",
