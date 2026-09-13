@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timezone
 
 from approvals.queue import ApprovalQueue, ApprovalStatus
@@ -223,14 +224,23 @@ class ExecutionManager:
     def _execution_price(order: Order, market_data: dict) -> float:
         side = order.side.lower()
         if side == "buy":
-            price = market_data.get("ask") or market_data.get("price")
+            executable_price = market_data.get("ask")
         elif side == "sell":
-            price = market_data.get("bid") or market_data.get("price")
+            executable_price = market_data.get("bid")
         else:
             raise ValueError(f"unknown side: {order.side}")
-        if price is None or float(price) <= 0:
-            raise ValueError("quote has no positive executable price")
-        return float(price)
+
+        # Only fall back when the executable-side field is genuinely absent.
+        # A present but unusable bid/ask is evidence of an unusable quote and
+        # must not silently turn into a different reference price.
+        price = market_data.get("price") if executable_price is None else executable_price
+        if price is None:
+            raise ValueError("quote has no executable price")
+
+        numeric_price = float(price)
+        if not math.isfinite(numeric_price) or numeric_price <= 0:
+            raise ValueError("quote executable price must be finite and greater than zero")
+        return numeric_price
 
     def _require_fresh_quote(self, market_data: dict) -> None:
         timestamp = market_data.get("timestamp")
