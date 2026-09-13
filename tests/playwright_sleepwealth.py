@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -69,6 +71,46 @@ def prove(context, name):
     page.screenshot(path=str(ARTIFACT_DIR / name), full_page=True)
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_proof_manifest():
+    github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+    commit_sha = os.getenv("GITHUB_SHA", "local")
+    if github_actions:
+        assert len(commit_sha) == 40
+        assert all(char in "0123456789abcdef" for char in commit_sha.lower())
+
+    screenshots = ["sleepwealth-desktop.png", "sleepwealth-mobile.png"]
+    manifest = {
+        "schema": "sleepwealth-playwright-proof-v1",
+        "commit_sha": commit_sha,
+        "github_run_id": os.getenv("GITHUB_RUN_ID"),
+        "repository": os.getenv("GITHUB_REPOSITORY"),
+        "proof_type": "playwright-ui-runtime",
+        "execution_mode": "paper",
+        "live_execution": False,
+        "market_observation": "read-only",
+        "authority": "non-authorizing evidence",
+        "screenshots": [
+            {
+                "name": name,
+                "sha256": sha256_file(ARTIFACT_DIR / name),
+            }
+            for name in screenshots
+        ],
+    }
+    (ARTIFACT_DIR / "proof-manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 with sync_playwright() as p:
     browser = p.chromium.launch()
     try:
@@ -81,3 +123,5 @@ with sync_playwright() as p:
         mobile.close()
     finally:
         browser.close()
+
+write_proof_manifest()
