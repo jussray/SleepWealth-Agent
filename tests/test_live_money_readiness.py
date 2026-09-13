@@ -18,6 +18,7 @@ def test_live_money_readiness_fails_closed_with_separate_receipts():
         "EXTERNAL_BROKER_ADAPTER",
         "LIVE_BROKER_SESSION_RECEIPT",
     ]
+    assert all(check["blocking"] is True for check in checks)
 
     classifications = {check["code"]: check["classification"] for check in checks}
     assert classifications == {
