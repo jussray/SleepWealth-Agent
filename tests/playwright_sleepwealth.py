@@ -201,7 +201,8 @@ def write_proof_manifest():
         allowed_effects=(EffectClass.READ_ONLY,),
         max_consequence=ConsequenceTier.INFORMATIONAL,
     )
-    authority_decision = AuthorityRuntime().evaluate(
+    authority_runtime = AuthorityRuntime((proof_claim_grant,))
+    authority_decision = authority_runtime.evaluate(
         AuthorityRequest(
             action="assert_runtime_truth",
             subject="sleepwealth-paper-ui-runtime",
@@ -210,7 +211,7 @@ def write_proof_manifest():
             evidence=evidence,
             current_source_sha=tested_sha,
             execution_mode="practice",
-            grant=proof_claim_grant,
+            grant_id="ci-proof-claim-v1",
         )
     )
     assert authority_decision.allowed is True
