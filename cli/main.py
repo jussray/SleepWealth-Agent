@@ -8,7 +8,7 @@ from backend.server import run_paper_dry_run
 from broker.factory import get_broker
 from engine.capital_ladder import CapitalLadder, FlipCycle
 from engine.validator import RulesValidator
-from market import CRYPTO_LANE, STOCK_LANE, normalize_lane
+from market import CRYPTO_LANE, STOCK_LANE, LaneBoundFixtureProvider, normalize_lane
 from rules import load_rules
 
 app = typer.Typer(help="Governed paper-trading simulator. Live execution is disabled.")
@@ -38,6 +38,14 @@ async def _run(mode, broker, lane, symbol, qty, side, auto_approve):
     if not symbol:
         symbol = "BTC-USD" if lane == CRYPTO_LANE else "AAPL"
 
+    market_provider = get_broker("mock", paper_only=True)
+    if not market_provider.is_paper_only():
+        typer.echo("[BLOCKED] mock market provider must remain paper-only.")
+        raise typer.Exit(1)
+    if not await market_provider.connect():
+        typer.echo("[BLOCKED] mock market provider connection failed.")
+        raise typer.Exit(1)
+
     typer.echo(
         f"[LANE] {lane} | paper_only=true | broker=mock | "
         f"live_execution=false"
@@ -47,6 +55,7 @@ async def _run(mode, broker, lane, symbol, qty, side, auto_approve):
         qty=qty,
         side=side,
         lane=lane,
+        market_provider=LaneBoundFixtureProvider(market_provider, lane),
     )
     typer.echo(
         f"[MARKET] {result['market_observation']['symbol']} "
