@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "trading-agent rules",
   "type": "object",
-  "required": ["version", "floor_cash", "ceiling", "symbol_scope"],
+  "required": ["version", "floor_cash", "ceiling", "symbol_scope", "lanes"],
   "properties": {
     "version": {"type": "string"},
     "floor_cash": {"type": "number", "minimum": 0},
@@ -11,6 +11,35 @@
     "symbol_scope": {"type": "string", "enum": ["approved", "observable-market"]},
     "approved_symbols": {"type": "array", "items": {"type": "string"}},
     "featured_symbols": {"type": "array", "items": {"type": "string"}},
+    "lanes": {
+      "type": "object",
+      "required": ["stock-market", "crypto"],
+      "properties": {
+        "stock-market": {
+          "type": "object",
+          "required": ["enabled", "paper_only", "symbol_scope", "featured_symbols"],
+          "properties": {
+            "enabled": {"const": true},
+            "paper_only": {"const": true},
+            "symbol_scope": {"const": "us-listed-directory"},
+            "featured_symbols": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+          },
+          "additionalProperties": false
+        },
+        "crypto": {
+          "type": "object",
+          "required": ["enabled", "paper_only", "symbol_scope", "featured_symbols"],
+          "properties": {
+            "enabled": {"const": true},
+            "paper_only": {"const": true},
+            "symbol_scope": {"const": "classified-observation"},
+            "featured_symbols": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "modes": {
       "type": "object",
       "properties": {
