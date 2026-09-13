@@ -219,6 +219,7 @@ def test_velocity_rate_is_scale_invariant():
     large_rules = rules()
     small_rules["ceiling"]["current"] = 20.0
     large_rules["ceiling"]["current"] = 200.0
+    large_rules["ceiling"]["max"] = 200.0
 
     small = CapitalLadder(small_rules).assess_history(
         [FlipCycle(10.0, 12.0, days_held=2)]
