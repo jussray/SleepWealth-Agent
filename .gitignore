@@ -8,6 +8,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.sleepwealth/
 audit.log
 *.log
 .env
