@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from approvals.queue import ApprovalQueue, ApprovalStatus
@@ -55,3 +57,59 @@ async def test_submission_error_persists_reconciliation_state(tmp_path):
     names = [event.get("event") for event in events]
     assert "execution_started" in names
     assert "execution_reconcile_required" in names
+
+
+def test_persistent_state_rejects_payload_tamper(tmp_path):
+    state = tmp_path / "approvals.json"
+    queue = ApprovalQueue(str(state), session_id="session-a")
+    proposal_id = queue.add(Order("AAPL", 1, "buy"), {"allowed": True})
+
+    envelope = json.loads(state.read_text())
+    envelope["payload"]["requests"][0]["order"]["qty"] = 999
+    state.write_text(json.dumps(envelope))
+
+    with pytest.raises(RuntimeError, match="integrity check failed"):
+        ApprovalQueue(str(state), session_id="session-b")
+
+    assert proposal_id == "PROP-1"
+
+
+def test_persistent_state_rejects_seal_tamper(tmp_path):
+    state = tmp_path / "approvals.json"
+    queue = ApprovalQueue(str(state), session_id="session-a")
+    queue.add(Order("AAPL", 1, "buy"), {"allowed": True})
+
+    envelope = json.loads(state.read_text())
+    envelope["seal"]["digest"] = "0" * 64
+    state.write_text(json.dumps(envelope))
+
+    with pytest.raises(RuntimeError, match="integrity check failed"):
+        ApprovalQueue(str(state), session_id="session-b")
+
+
+def test_persistent_state_rejects_missing_or_malformed_seal(tmp_path):
+    state = tmp_path / "approvals.json"
+    queue = ApprovalQueue(str(state), session_id="session-a")
+    queue.add(Order("AAPL", 1, "buy"), {"allowed": True})
+
+    envelope = json.loads(state.read_text())
+    del envelope["seal"]
+    state.write_text(json.dumps(envelope))
+    with pytest.raises(RuntimeError, match="seal envelope is missing"):
+        ApprovalQueue(str(state), session_id="session-b")
+
+    state.write_text(json.dumps({"payload": {"version": 1}, "seal": {"algorithm": "md5", "digest": "x"}}))
+    with pytest.raises(RuntimeError, match="seal algorithm"):
+        ApprovalQueue(str(state), session_id="session-c")
+
+
+def test_persistent_state_rejects_truncated_file(tmp_path):
+    state = tmp_path / "approvals.json"
+    queue = ApprovalQueue(str(state), session_id="session-a")
+    queue.add(Order("AAPL", 1, "buy"), {"allowed": True})
+
+    content = state.read_text()
+    state.write_text(content[: max(1, len(content) // 2)])
+
+    with pytest.raises(RuntimeError, match="approval state is unreadable"):
+        ApprovalQueue(str(state), session_id="session-b")
