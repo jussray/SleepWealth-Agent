@@ -20,7 +20,7 @@ def classify_lane(instrument_type: str) -> str:
 
 
 class YahooPublicChartProvider:
-    """Read-only stock-lane observations from Yahoo's public chart endpoint."""
+    """Read-only market observations with lane classification and no execution methods."""
 
     source_name = "yahoo-public-chart"
     source_classification = "external-public-delayed"
@@ -62,11 +62,6 @@ class YahooPublicChartProvider:
         meta = result.get("meta") or {}
         instrument_type = str(meta.get("instrumentType") or "").strip().upper()
         lane = classify_lane(instrument_type)
-        if lane != "stock-market":
-            observed_type = instrument_type or "UNKNOWN"
-            raise ValueError(
-                f"{normalized} instrument type {observed_type} is not eligible for the stock lane"
-            )
 
         timestamps = result.get("timestamp") or []
         indicators = result.get("indicators") or {}
@@ -96,9 +91,9 @@ class YahooPublicChartProvider:
             "timestamp": datetime.fromtimestamp(timestamp, tz=UTC),
             "source_name": self.source_name,
             "source_classification": self.source_classification,
-            "instrument_type": instrument_type,
+            "instrument_type": instrument_type or "UNKNOWN",
             "lane": lane,
-            "crypto_native": False,
+            "crypto_native": lane == "crypto",
         }
 
     async def get_market_data(self, symbol: str) -> dict:

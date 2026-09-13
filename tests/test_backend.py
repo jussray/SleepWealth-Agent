@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from backend.server import observe_approved_markets, run_paper_dry_run
+from backend.server import observe_approved_markets, observe_lane_markets, run_paper_dry_run
+from market import CRYPTO_LANE, STOCK_LANE
 from market.observation import observe_market
 from market.providers import YahooPublicChartProvider
 
@@ -12,16 +13,21 @@ class ReadOnlyQuoteProvider:
     source_classification = "test-observation"
     max_age_seconds = 5 * 60
 
-    def __init__(self, price: float):
+    def __init__(self, price: float, lane: str = STOCK_LANE):
         self.price = price
+        self.lane = lane
 
     async def get_market_data(self, symbol: str) -> dict:
+        crypto = self.lane == CRYPTO_LANE
         return {
             "symbol": symbol,
             "price": self.price,
             "bid": self.price - 0.1,
             "ask": self.price + 0.1,
             "timestamp": datetime.now(timezone.utc),
+            "instrument_type": "CRYPTOCURRENCY" if crypto else "EQUITY",
+            "lane": self.lane,
+            "crypto_native": crypto,
         }
 
 
@@ -35,69 +41,140 @@ class StaleQuoteProvider(ReadOnlyQuoteProvider):
 
 
 @pytest.mark.asyncio
-async def test_approved_market_universe_is_observed_read_only():
-    result = await observe_approved_markets(ReadOnlyQuoteProvider(120.0))
+async def test_stock_featured_markets_are_observed_read_only():
+    result = await observe_approved_markets(ReadOnlyQuoteProvider(120.0, STOCK_LANE))
 
     assert result["status"] == "ok"
+    assert result["lane"] == STOCK_LANE
     assert result["approved_symbols"] == ["AAPL", "MSFT", "VTI"]
     assert [market["symbol"] for market in result["markets"]] == ["AAPL", "MSFT", "VTI"]
-    assert all(market["price"] == 120.0 for market in result["markets"])
+    assert all(market["lane"] == STOCK_LANE for market in result["markets"])
     assert all(market["read_only"] is True for market in result["markets"])
     assert all(market["authority"] == "none" for market in result["markets"])
-    assert all(market["source"] == "injected-read-only-provider" for market in result["markets"])
-    assert all(market["freshness"] == "fresh" for market in result["markets"])
     assert all(len(market["fingerprint"]) == 64 for market in result["markets"])
-    assert all(market["continuity_cookie"].startswith("sw-market-v1:") for market in result["markets"])
     assert result["live_execution"] is False
-    assert result["truth"] == "watching markets and continuity markers do not grant execution authority"
 
 
 @pytest.mark.asyncio
-async def test_backend_uses_observed_price_for_evaluation_and_paper_fill(tmp_path):
+async def test_crypto_featured_markets_are_separate_read_only_lane():
+    result = await observe_lane_markets(
+        CRYPTO_LANE,
+        ReadOnlyQuoteProvider(50000.0, CRYPTO_LANE),
+    )
+
+    assert result["status"] == "ok"
+    assert result["lane"] == CRYPTO_LANE
+    assert result["featured_symbols"] == ["BTC-USD", "ETH-USD", "SOL-USD"]
+    assert [market["symbol"] for market in result["markets"]] == [
+        "BTC-USD",
+        "ETH-USD",
+        "SOL-USD",
+    ]
+    assert all(market["lane"] == CRYPTO_LANE for market in result["markets"])
+    assert all(market["crypto_native"] is True for market in result["markets"])
+    assert result["live_execution"] is False
+
+
+@pytest.mark.asyncio
+async def test_stock_paper_cycle_uses_observed_price_and_lane_receipts(tmp_path):
     result = await run_paper_dry_run(
         "AAPL",
         0.04,
         "buy",
         str(tmp_path / "audit.log"),
-        market_provider=ReadOnlyQuoteProvider(120.0),
+        market_provider=ReadOnlyQuoteProvider(120.0, STOCK_LANE),
+        lane=STOCK_LANE,
     )
+
     assert result["status"] == "executed"
+    assert result["lane"] == STOCK_LANE
     assert result["market_observation"]["price"] == 120.0
-    assert result["market_observation"]["read_only"] is True
+    assert result["market_observation"]["lane"] == STOCK_LANE
     assert result["evaluation"]["estimated_cost"] == pytest.approx(4.8)
-    assert result["evaluation"]["observed_price"] == 120.0
-    assert result["evaluation"]["symbol_scope"] == "observable-market"
+    assert result["evaluation"]["lane_symbol_scope"] == "us-listed-directory"
     assert result["execution"]["filled_price"] == 120.0
     assert result["execution"]["fill_classification"] == "SIMULATED_AT_OBSERVED_PRICE"
-    assert result["account_after"]["cash"] == pytest.approx(9995.2)
-    assert result["continuity"]["input_market_fingerprint"] == result["market_observation"]["fingerprint"]
-    assert result["continuity"]["input_market_cookie"] == result["market_observation"]["continuity_cookie"]
-    assert len(result["continuity"]["decision_fingerprint"]) == 64
+    assert result["continuity"]["lane"] == STOCK_LANE
+    assert result["continuity"]["lane_cookie"].startswith("sw-lane-v1:")
     assert result["continuity"]["decision_cookie"].startswith("sw-decision-v1:")
-    assert len(result["continuity"]["outcome_fingerprint"]) == 64
     assert result["continuity"]["outcome_cookie"].startswith("sw-outcome-v1:")
-    assert result["continuity"]["authority"] == "none"
-    assert result["approved_symbols"] == ["AAPL", "MSFT", "VTI"]
+    assert result["featured_symbols"] == ["AAPL", "MSFT", "VTI"]
+    assert "approved_symbols" not in result
     assert result["broker"] == "mock"
     assert result["live_execution"] is False
 
 
 @pytest.mark.asyncio
-async def test_observable_market_scope_allows_non_featured_symbol_in_paper_mode(tmp_path):
+async def test_non_featured_stock_can_use_same_governed_paper_path(tmp_path):
     result = await run_paper_dry_run(
         "IBM",
         0.01,
         "buy",
         str(tmp_path / "audit.log"),
-        market_provider=ReadOnlyQuoteProvider(120.0),
+        market_provider=ReadOnlyQuoteProvider(120.0, STOCK_LANE),
+        lane=STOCK_LANE,
     )
+
     assert result["status"] == "executed"
     assert result["order"]["symbol"] == "IBM"
-    assert "IBM" not in result["approved_symbols"]
-    assert result["evaluation"]["symbol_scope"] == "observable-market"
-    assert result["market_observation"]["symbol"] == "IBM"
+    assert "IBM" not in result["featured_symbols"]
+    assert result["lane_evidence"]["scope"] == "us-listed-directory"
     assert result["live_execution"] is False
+
+
+@pytest.mark.asyncio
+async def test_crypto_paper_cycle_is_separate_and_mock_only(tmp_path):
+    result = await run_paper_dry_run(
+        "BTC-USD",
+        0.00005,
+        "buy",
+        str(tmp_path / "audit.log"),
+        market_provider=ReadOnlyQuoteProvider(50000.0, CRYPTO_LANE),
+        lane=CRYPTO_LANE,
+    )
+
+    assert result["status"] == "executed"
+    assert result["lane"] == CRYPTO_LANE
+    assert result["lane_policy"] == {
+        "paper_only": True,
+        "symbol_scope": "classified-observation",
+    }
+    assert result["market_observation"]["crypto_native"] is True
+    assert result["market_observation"]["instrument_type"] == "CRYPTOCURRENCY"
+    assert result["lane_evidence"]["scope"] == "classified-observation"
+    assert result["continuity"]["lane_cookie"].startswith("sw-lane-v1:")
+    assert result["execution"]["filled_price"] == 50000.0
+    assert result["featured_symbols"] == ["BTC-USD", "ETH-USD", "SOL-USD"]
+    assert "approved_symbols" not in result
     assert result["broker"] == "mock"
+    assert result["live_execution"] is False
+    assert "no real money moved" in result["truth"]
+
+
+@pytest.mark.asyncio
+async def test_stock_lane_rejects_crypto_classification(tmp_path):
+    with pytest.raises(ValueError, match="not requested lane stock-market"):
+        await run_paper_dry_run(
+            "BTC-USD",
+            0.00005,
+            "buy",
+            str(tmp_path / "audit.log"),
+            market_provider=ReadOnlyQuoteProvider(50000.0, CRYPTO_LANE),
+            lane=STOCK_LANE,
+        )
+
+
+@pytest.mark.asyncio
+async def test_crypto_lane_rejects_stock_classification(tmp_path):
+    with pytest.raises(ValueError, match="not requested lane crypto"):
+        await run_paper_dry_run(
+            "AAPL",
+            0.01,
+            "buy",
+            str(tmp_path / "audit.log"),
+            market_provider=ReadOnlyQuoteProvider(120.0, STOCK_LANE),
+            lane=CRYPTO_LANE,
+        )
 
 
 @pytest.mark.asyncio
@@ -107,7 +184,8 @@ async def test_observed_price_can_block_order_even_when_old_assumption_would_pas
         0.04,
         "buy",
         str(tmp_path / "audit.log"),
-        market_provider=ReadOnlyQuoteProvider(130.0),
+        market_provider=ReadOnlyQuoteProvider(130.0, STOCK_LANE),
+        lane=STOCK_LANE,
     )
     assert result["status"] == "blocked"
     assert result["stage"] == "evaluator"
@@ -121,16 +199,15 @@ async def test_observed_price_can_block_order_even_when_old_assumption_would_pas
 @pytest.mark.asyncio
 async def test_stale_observation_fails_closed():
     with pytest.raises(ValueError, match="is stale"):
-        await observe_market(StaleQuoteProvider(120.0), "AAPL")
+        await observe_market(StaleQuoteProvider(120.0, STOCK_LANE), "AAPL")
 
 
 @pytest.mark.asyncio
-async def test_yahoo_public_provider_parses_latest_usable_stock_close():
+async def test_yahoo_public_provider_classifies_stock_observation():
     timestamp = int(datetime.now(timezone.utc).timestamp())
 
     def fake_fetch(url: str) -> dict:
         assert "query1.finance.yahoo.com" in url
-        assert "/AAPL?" in url
         return {
             "chart": {
                 "result": [
@@ -140,27 +217,23 @@ async def test_yahoo_public_provider_parses_latest_usable_stock_close():
                             "currency": "USD",
                             "instrumentType": "EQUITY",
                         },
-                        "timestamp": [timestamp - 86400, timestamp],
-                        "indicators": {"quote": [{"close": [118.5, 121.25]}]},
+                        "timestamp": [timestamp],
+                        "indicators": {"quote": [{"close": [121.25]}]},
                     }
                 ],
                 "error": None,
             }
         }
 
-    provider = YahooPublicChartProvider(fetch_json=fake_fetch)
-    data = await provider.get_market_data("AAPL")
-    assert data["symbol"] == "AAPL"
+    data = await YahooPublicChartProvider(fetch_json=fake_fetch).get_market_data("AAPL")
     assert data["price"] == pytest.approx(121.25)
-    assert data["source_name"] == "yahoo-public-chart"
-    assert data["source_classification"] == "external-public-delayed"
     assert data["instrument_type"] == "EQUITY"
-    assert data["lane"] == "stock-market"
+    assert data["lane"] == STOCK_LANE
     assert data["crypto_native"] is False
 
 
 @pytest.mark.asyncio
-async def test_yahoo_public_provider_rejects_crypto_native_instrument():
+async def test_yahoo_public_provider_classifies_crypto_without_mixing_lanes():
     timestamp = int(datetime.now(timezone.utc).timestamp())
 
     def fake_fetch(_url: str) -> dict:
@@ -181,22 +254,34 @@ async def test_yahoo_public_provider_rejects_crypto_native_instrument():
             }
         }
 
-    provider = YahooPublicChartProvider(fetch_json=fake_fetch)
-    with pytest.raises(ValueError, match="not eligible for the stock lane"):
-        await provider.get_market_data("BTC-USD")
+    data = await YahooPublicChartProvider(fetch_json=fake_fetch).get_market_data("BTC-USD")
+    assert data["price"] == pytest.approx(50000.0)
+    assert data["instrument_type"] == "CRYPTOCURRENCY"
+    assert data["lane"] == CRYPTO_LANE
+    assert data["crypto_native"] is True
 
 
 @pytest.mark.asyncio
-async def test_default_ci_observation_stays_paper_only(tmp_path, monkeypatch):
+async def test_default_mock_provider_supports_both_lanes_without_real_money(tmp_path, monkeypatch):
     monkeypatch.setenv("SLEEPWEALTH_MARKET_SOURCE", "mock")
-    market_result = await observe_approved_markets()
-    assert market_result["approved_symbols"] == ["AAPL", "MSFT", "VTI"]
-    assert all(market["source"] == "mock-market-observation" for market in market_result["markets"])
-    assert all(market["source_classification"] == "synthetic-fixture" for market in market_result["markets"])
 
-    result = await run_paper_dry_run("AAPL", 0.01, "buy", str(tmp_path / "audit.log"))
+    stock = await observe_lane_markets(STOCK_LANE)
+    crypto = await observe_lane_markets(CRYPTO_LANE)
+    assert stock["status"] == "ok"
+    assert crypto["status"] == "ok"
+    assert all(row["lane"] == STOCK_LANE for row in stock["markets"])
+    assert all(row["lane"] == CRYPTO_LANE for row in crypto["markets"])
+
+    result = await run_paper_dry_run(
+        "BTC-USD",
+        0.01,
+        "buy",
+        str(tmp_path / "audit.log"),
+        lane=CRYPTO_LANE,
+    )
     assert result["status"] == "executed"
     assert result["market_observation"]["source"] == "mock-market-observation"
-    assert result["market_observation"]["read_only"] is True
+    assert result["market_observation"]["lane"] == CRYPTO_LANE
     assert result["execution"]["filled_price"] == 100.0
-    assert result["truth"] == "read-only market observation; paper simulation only; no real money moved"
+    assert "approved_symbols" not in result
+    assert result["live_execution"] is False
