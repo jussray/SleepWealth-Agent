@@ -62,7 +62,8 @@
         "max_step_multiplier": {"type": "number", "minimum": 1},
         "max_cycle_loss_pct": {"type": "number", "exclusiveMinimum": 0},
         "can_auto_promote": {"const": false}
-      }
+      },
+      "additionalProperties": false
     },
     "modes": {
       "type": "object",
@@ -70,7 +71,8 @@
         "truthmode": {"type": "boolean"},
         "redteam": {"type": "boolean"},
         "lindy": {"type": "boolean"}
-      }
+      },
+      "additionalProperties": false
     },
     "ceiling": {
       "type": "object",
@@ -79,7 +81,9 @@
         "current": {"type": "number", "minimum": 0},
         "max": {"type": "number", "minimum": 0},
         "can_auto_increase": {"const": false}
-      }
+      },
+      "additionalProperties": false
     }
-  }
+  },
+  "additionalProperties": false
 }

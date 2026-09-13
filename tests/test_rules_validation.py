@@ -77,6 +77,30 @@ def test_checked_in_schema_rejects_unknown_lane_fields():
     )
 
 
+def test_closed_schema_rejects_unknown_authority_shaped_fields():
+    cases = (
+        ((), "live_execution", True, "schema $:"),
+        (("capital_ladder",), "wallet", "external", "schema capital_ladder:"),
+        (("modes",), "broker", "external", "schema modes:"),
+        (("ceiling",), "auto_execute", True, "schema ceiling:"),
+    )
+
+    for path, key, value, prefix in cases:
+        rules = deepcopy(load_rules())
+        target = rules
+        for segment in path:
+            target = target[segment]
+        target[key] = value
+
+        ok, errors = RulesValidator().validate(rules)
+
+        assert not ok
+        assert any(
+            error.startswith(prefix) and "Additional properties" in error
+            for error in errors
+        )
+
+
 def test_schema_rejects_non_object_root_without_policy_crash():
     ok, errors = RulesValidator().validate([])
 
