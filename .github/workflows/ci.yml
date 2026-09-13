@@ -145,10 +145,30 @@ jobs:
           cat /tmp/sleepwealth-backend.log
           exit 1
 
+      - name: Start MOM8 public preview
+        run: |
+          python -m http.server 8766 --bind 127.0.0.1 --directory public >/tmp/mom8-preview.log 2>&1 &
+          echo $! >/tmp/mom8-preview.pid
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8766/mom8/ >/tmp/mom8-preview.html; then
+              grep -q "MOM OF 8" /tmp/mom8-preview.html
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/mom8-preview.log
+          exit 1
+
       - name: Playwright Sleep Wealth proof
         env:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python tests/playwright_sleepwealth.py
+
+      - name: Playwright MOM8 public preview proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          MOM8_BASE_URL: http://127.0.0.1:8766/mom8/
+        run: python tests/playwright_mom8.py
 
       - name: Upload Sleep Wealth Playwright proof
         if: always()
