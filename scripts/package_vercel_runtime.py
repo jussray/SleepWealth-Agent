@@ -19,6 +19,7 @@ RUNTIME_FILES = (
     "audit/__init__.py",
     "audit/logger.py",
     "backend/__init__.py",
+    "backend/practice_state_store.py",
     "backend/server.py",
     "backend/external_observers.py",
     "backend/pump_live_box_server.py",

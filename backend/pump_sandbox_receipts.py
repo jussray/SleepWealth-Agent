@@ -9,12 +9,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from math import isfinite
-from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from audit.logger import AuditLogger
+from backend.practice_state_store import practice_state_store
 
 
 def _fingerprint(payload: object) -> str:
@@ -47,9 +46,10 @@ class PumpSandboxReceiptBook:
     ):
         self.initial_cash = float(initial_cash)
         self.audit = AuditLogger(audit_path) if audit_path else None
-        self.practice_state_path = Path(practice_state_path) if practice_state_path else None
-        if self.practice_state_path is not None:
-            self.practice_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_store = practice_state_store(practice_state_path)
+        self._state_version: str | None = None
+        self._state_persisted = False
+        self.persistence_fault: str | None = None
 
     async def portfolio(self, broker) -> dict[str, Any]:
         account = await broker.get_account_summary()
@@ -81,6 +81,12 @@ class PumpSandboxReceiptBook:
             **payload,
             "pnl_fingerprint": fingerprint,
             "pnl_cookie": f"pump-sandbox-pnl-v1:{fingerprint[:24]}",
+            "practice_state_persistence_required": self.state_store is not None,
+            "practice_state_persisted": self._state_persisted,
+            "practice_state_persistence_ok": self.persistence_fault is None,
+            "practice_state_transport": (
+                self.state_store.kind if self.state_store is not None else "none"
+            ),
             "authority": "sandbox-simulation-only",
             "status": "ok",
         }
@@ -108,34 +114,16 @@ class PumpSandboxReceiptBook:
             "live_execution": False,
         }
 
-    def _atomic_write_state(self, snapshot: Mapping[str, object]) -> None:
-        if self.practice_state_path is None:
-            return
-        path = self.practice_state_path
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        encoded = (json.dumps(snapshot, sort_keys=True, default=str) + "\n").encode("utf-8")
-        try:
-            with open(tmp, "wb") as fh:
-                fh.write(encoded)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, path)
-        finally:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-
     async def persist_state(
         self,
         broker,
         receipts: Iterable[Mapping[str, object]],
     ) -> dict[str, object]:
-        if self.practice_state_path is None:
+        if self.state_store is None:
             return {
                 "classification": "UNCONFIGURED",
                 "persisted": False,
-                "reason": "no durable practice state path configured",
+                "reason": "no durable practice state store configured",
                 "real_money": False,
                 "live_execution": False,
             }
@@ -146,28 +134,54 @@ class PumpSandboxReceiptBook:
             "state_fingerprint": fingerprint,
             "state_cookie": f"pump-practice-state-v1:{fingerprint[:24]}",
         }
-        await asyncio.to_thread(self._atomic_write_state, snapshot)
+        try:
+            version = await asyncio.to_thread(
+                self.state_store.write,
+                snapshot,
+                self._state_version,
+            )
+        except Exception as exc:  # simulated execution already happened; report separately
+            self._state_persisted = False
+            self.persistence_fault = str(exc)
+            return {
+                "classification": "BLOCKED",
+                "persisted": False,
+                "transport": self.state_store.kind,
+                "reason": f"simulated execution occurred but durable practice state was not accepted: {exc}",
+                "trusted": False,
+                "real_money": False,
+                "live_execution": False,
+            }
+        self._state_version = version
+        self._state_persisted = True
+        self.persistence_fault = None
+        remote = self.state_store.kind == "remote-http"
         return {
             "classification": "PERSISTED_UNANCHORED",
             "persisted": True,
             "state_fingerprint": fingerprint,
             "state_cookie": snapshot["state_cookie"],
-            "path_configured": True,
+            "transport": self.state_store.kind,
             "trusted": False,
-            "reason": "atomic local sandbox snapshot persisted; no independent trust anchor claimed",
+            "reason": (
+                "conditional remote sandbox snapshot persisted; no independent trust anchor claimed"
+                if remote
+                else "atomic local sandbox snapshot persisted; no independent trust anchor claimed"
+            ),
             "real_money": False,
             "live_execution": False,
         }
 
     def _read_state_sync(self) -> dict[str, object] | None:
-        if self.practice_state_path is None or not self.practice_state_path.exists():
+        if self.state_store is None:
             return None
-        try:
-            value = json.loads(self.practice_state_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"practice state is unreadable: {exc}") from exc
-        if not isinstance(value, dict):
-            raise RuntimeError("practice state must be a JSON object")
+        record = self.state_store.read()
+        if record is None:
+            self._state_version = None
+            self._state_persisted = False
+            return None
+        self._state_version = record.version
+        value = record.snapshot
         supplied = str(value.get("state_fingerprint") or "").lower()
         payload = {
             key: item
@@ -176,6 +190,8 @@ class PumpSandboxReceiptBook:
         }
         if len(supplied) != 64 or supplied != _fingerprint(payload):
             raise RuntimeError("practice state fingerprint mismatch")
+        if value.get("state_cookie") != f"pump-practice-state-v1:{supplied[:24]}":
+            raise RuntimeError("practice state continuity cookie mismatch")
         if payload.get("schema") != self.STATE_SCHEMA:
             raise RuntimeError("practice state schema mismatch")
         if payload.get("authority") != "sandbox-simulation-only":
@@ -191,6 +207,8 @@ class PumpSandboxReceiptBook:
             raise RuntimeError("practice state broker snapshot is missing")
         if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
             raise RuntimeError("practice state execution receipts are invalid")
+        self._state_persisted = True
+        self.persistence_fault = None
         return payload
 
     async def restore_state(self, broker) -> list[dict[str, object]]:
