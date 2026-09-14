@@ -28,6 +28,16 @@ def wait_for_health():
     raise RuntimeError("Pump Live Box failed health check")
 
 
+def pump_evidence(price):
+    return {
+        "source_url": "https://pump.fun/coin/MOM8",
+        "symbol": "MOM8",
+        "mint": "MOM8-DEMO-MINT",
+        "price": price,
+        "observed_at": "2026-09-13T23:05:00Z",
+    }
+
+
 def main():
     ARTIFACT_DIR.mkdir(exist_ok=True)
     env = os.environ.copy()
@@ -52,6 +62,36 @@ def main():
             assert page.get_by_text("PUBLIC EVIDENCE · READ-ONLY").is_visible()
             assert page.get_by_text("SIMULATED EXECUTION ONLY").is_visible()
             assert page.locator("#cash").inner_text() == "$100.00"
+
+            stale_response = page.request.post(
+                BASE_URL.rstrip("/") + "/api/proposals",
+                data={"evidence": pump_evidence(0.5), "qty": 10, "side": "buy"},
+            )
+            assert stale_response.ok
+            stale = stale_response.json()
+            current_response = page.request.post(
+                BASE_URL.rstrip("/") + "/api/proposals",
+                data={"evidence": pump_evidence(0.75), "qty": 10, "side": "buy"},
+            )
+            assert current_response.ok
+            current = current_response.json()
+            assert stale["proposal_id"] != current["proposal_id"]
+            stale_approval = page.request.post(
+                BASE_URL.rstrip("/") + f"/api/proposals/{stale['proposal_id']}/approve",
+                data={},
+            )
+            assert stale_approval.ok
+            stale_block = stale_approval.json()
+            assert stale_block["status"] == "blocked"
+            assert stale_block["stale_evidence"] is True
+            assert stale_block["bound_price"] == 0.5
+            assert stale_block["current_price"] == 0.75
+            assert stale_block["real_money"] is False
+            assert stale_block["live_execution"] is False
+            wallet_after_stale = page.request.get(BASE_URL.rstrip("/") + "/api/wallet").json()
+            assert wallet_after_stale["cash"] == 100.0
+            proof["checks"].append("stale_proposal_blocked_on_price_drift")
+
             page.locator("#observed-at").fill("2026-09-13T23:05:00Z")
             page.get_by_role("button", name="1 · Bind evidence + propose").click()
             page.wait_for_function("() => document.querySelector('#result').textContent.includes('\\\"status\\\": \\\"pending\\\"')")
