@@ -3,6 +3,7 @@ from pathlib import Path
 
 from scripts.package_vercel_runtime import (
     FORBIDDEN_RUNTIME_PATHS,
+    REQUIRED_STATIC_ASSETS,
     RUNTIME_FILES,
     package_runtime,
 )
@@ -26,11 +27,8 @@ def test_runtime_bundle_is_exact_head_and_non_authorizing(tmp_path):
     assert packaged == set(RUNTIME_FILES)
     assert packaged.isdisjoint(FORBIDDEN_RUNTIME_PATHS)
 
-    required_public = {
-        "public/mom8/index.html",
-        "public/mom8/styles.css",
-        "public/mom8/logo.svg",
-    }
+    required_public = set(REQUIRED_STATIC_ASSETS)
+    assert manifest["required_static_assets"] == list(REQUIRED_STATIC_ASSETS)
     assert required_public.issubset(packaged)
     assert all((output / path).is_file() for path in required_public)
     assert all((output / path).stat().st_size > 0 for path in required_public)
