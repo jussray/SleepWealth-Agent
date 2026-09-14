@@ -1,9 +1,9 @@
-"""Pump practice evidence graduation for human review only.
+"""Pump practice evidence graduation for human eligibility review only.
 
 This module evaluates simulation coverage and receipt integrity. It never grants
 wallet, broker, signing, funding, transfer, minting, or real-money authority.
 Profit/loss is reported as an observed outcome, not as an execution gate or a
-claim that live trading would be safe or profitable.
+claim that live trading would be safe, eligible, or profitable.
 """
 
 from __future__ import annotations
@@ -79,6 +79,34 @@ def _count_round_trips(receipts: Iterable[Mapping[str, object]]) -> tuple[int, b
     return round_trips, valid
 
 
+def _final_outcome_continuity(
+    rows: list[dict[str, object]],
+    final_portfolio: Mapping[str, object],
+    *,
+    outcome_observed: bool,
+    pnl_total: float,
+    equity: float,
+) -> bool:
+    """Bind the latest simulated execution receipt to the current sandbox state."""
+
+    if not rows or not outcome_observed:
+        return False
+    last = rows[-1]
+    try:
+        receipt_pnl = float(last.get("sandbox_pnl_total", float("nan")))
+        receipt_equity = float(last.get("sandbox_equity", float("nan")))
+    except (TypeError, ValueError):
+        return False
+    return (
+        isfinite(receipt_pnl)
+        and isfinite(receipt_equity)
+        and abs(receipt_pnl - pnl_total) <= 1e-9
+        and abs(receipt_equity - equity) <= 1e-9
+        and str(last.get("pnl_fingerprint") or "").lower()
+        == str(final_portfolio.get("pnl_fingerprint") or "").lower()
+    )
+
+
 def evaluate_pump_practice_graduation(
     receipts: Iterable[Mapping[str, object]],
     final_portfolio: Mapping[str, object],
@@ -90,7 +118,7 @@ def evaluate_pump_practice_graduation(
 
     The default floors are evidence-coverage defaults only. They are not
     financial advice and do not imply that satisfying them makes live trading
-    appropriate, safe, profitable, or authorized.
+    appropriate, safe, profitable, eligible, or authorized.
     """
 
     minimum_executions = int(minimum_executions)
@@ -139,6 +167,13 @@ def evaluate_pump_practice_graduation(
         and final_portfolio.get("live_execution") is False
         and final_portfolio.get("wallet_mode") == "sandbox"
     )
+    final_continuity = _final_outcome_continuity(
+        rows,
+        final_portfolio,
+        outcome_observed=outcome_observed,
+        pnl_total=pnl_total,
+        equity=equity,
+    )
 
     checks = (
         PracticeCheck(
@@ -184,6 +219,16 @@ def evaluate_pump_practice_graduation(
             source="pump-sandbox-pnl",
         ),
         PracticeCheck(
+            code="FINAL_OUTCOME_CONTINUITY",
+            classification="VERIFIED" if final_continuity else "BLOCKED",
+            reason=(
+                "current sandbox P&L/equity is bound to the latest simulated execution receipt"
+                if final_continuity
+                else "current sandbox outcome no longer matches the latest simulated execution receipt"
+            ),
+            source="pump-sandbox-pnl",
+        ),
+        PracticeCheck(
             code="SIMULATED_PNL_SIGNAL",
             classification=(
                 "OBSERVED_POSITIVE"
@@ -201,7 +246,9 @@ def evaluate_pump_practice_graduation(
     )
 
     blocking_checks = [check for check in checks if check.blocking]
-    review_ready = all(check.classification == "VERIFIED" for check in blocking_checks)
+    practice_evidence_complete = all(
+        check.classification == "VERIFIED" for check in blocking_checks
+    )
     metrics = {
         "execution_count": execution_count,
         "minimum_executions": minimum_executions,
@@ -212,17 +259,33 @@ def evaluate_pump_practice_graduation(
     }
     fingerprint = _digest(
         {
-            "schema": "pump-practice-graduation-v1",
+            "schema": "pump-practice-graduation-v2",
             "checks": [check.to_dict() for check in checks],
             "metrics": metrics,
+            "platform_eligibility_verified": False,
         }
     )
     return {
-        "schema": "pump-practice-graduation-v1",
+        "schema": "pump-practice-graduation-v2",
         "event": "pump_practice_graduation_evaluated",
-        "classification": "READY_FOR_ADULT_LIVE_REVIEW" if review_ready else "PRACTICE_REQUIRED",
-        "review_ready": review_ready,
-        "practice_evidence_complete": review_ready,
+        "classification": (
+            "READY_FOR_ELIGIBILITY_REVIEW"
+            if practice_evidence_complete
+            else "PRACTICE_REQUIRED"
+        ),
+        "review_ready": practice_evidence_complete,
+        "practice_evidence_complete": practice_evidence_complete,
+        "live_review_ready": False,
+        "platform_eligibility_verified": False,
+        "eligibility_review_required": True,
+        "eligibility": {
+            "classification": "UNVERIFIED",
+            "source": "external-eligibility-review-required",
+            "reason": (
+                "simulation evidence cannot establish age, account, jurisdiction, identity, "
+                "or platform eligibility"
+            ),
+        },
         "checks": [check.to_dict() for check in checks],
         "blockers": [
             check.code
@@ -231,7 +294,7 @@ def evaluate_pump_practice_graduation(
         ],
         "metrics": metrics,
         "fingerprint": fingerprint,
-        "continuity_cookie": f"pump-practice-graduation-v1:{fingerprint[:24]}",
+        "continuity_cookie": f"pump-practice-graduation-v2:{fingerprint[:24]}",
         "manual_adult_review_required": True,
         "execution_authorized": False,
         "submit_capability": False,
@@ -240,8 +303,8 @@ def evaluate_pump_practice_graduation(
         "live_execution": False,
         "authority": "none",
         "truth": (
-            "Review-ready means the configured simulation-evidence coverage is complete. "
-            "It does not authorize trading, prove future profitability, bypass age/account "
-            "eligibility, or make live execution safe."
+            "Practice-complete means the configured simulation-evidence coverage is complete. "
+            "It does not establish platform eligibility, authorize trading, prove future "
+            "profitability, or make live execution safe."
         ),
     }

@@ -122,7 +122,7 @@ async def test_live_box_round_trip_emits_pnl_and_chained_audit_receipts(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_practice_graduation_reaches_review_only_after_evidence_floor(tmp_path):
+async def test_practice_graduation_reaches_eligibility_review_only_after_evidence_floor(tmp_path):
     session = PumpLiveBoxSession(
         100,
         state_path=None,
@@ -150,9 +150,13 @@ async def test_practice_graduation_reaches_review_only_after_evidence_floor(tmp_
     await session.approve(sell["proposal_id"])
     after = await session.graduation()
 
-    assert after["classification"] == "READY_FOR_ADULT_LIVE_REVIEW"
+    assert after["classification"] == "READY_FOR_ELIGIBILITY_REVIEW"
     assert after["review_ready"] is True
     assert after["practice_evidence_complete"] is True
+    assert after["live_review_ready"] is False
+    assert after["platform_eligibility_verified"] is False
+    assert after["eligibility_review_required"] is True
+    assert after["eligibility"]["classification"] == "UNVERIFIED"
     assert after["blockers"] == []
     assert after["metrics"]["execution_count"] == 2
     assert after["metrics"]["completed_round_trips"] == 1
@@ -187,6 +191,36 @@ async def test_practice_graduation_fails_closed_when_execution_receipt_is_tamper
     assert "RECEIPT_INTEGRITY" in graduation["blockers"]
     assert graduation["execution_authorized"] is False
     assert graduation["real_money"] is False
+
+
+@pytest.mark.asyncio
+async def test_practice_graduation_demotes_on_unreceipted_portfolio_drift(tmp_path):
+    session = PumpLiveBoxSession(
+        100,
+        state_path=None,
+        session_id="pump-practice-continuity-test",
+        audit_path=str(tmp_path / "continuity-audit.jsonl"),
+        minimum_practice_executions=2,
+        minimum_practice_round_trips=1,
+    )
+    buy = await session.propose(evidence(price=0.5), 10, "buy")
+    await session.approve(buy["proposal_id"])
+    sell = await session.propose(evidence(price=0.75), 10, "sell")
+    await session.approve(sell["proposal_id"])
+
+    ready = await session.graduation()
+    assert ready["classification"] == "READY_FOR_ELIGIBILITY_REVIEW"
+    assert ready["practice_evidence_complete"] is True
+
+    session.broker.cash += 1.0
+    demoted = await session.graduation()
+
+    assert demoted["classification"] == "PRACTICE_REQUIRED"
+    assert demoted["practice_evidence_complete"] is False
+    assert "FINAL_OUTCOME_CONTINUITY" in demoted["blockers"]
+    assert demoted["live_review_ready"] is False
+    assert demoted["execution_authorized"] is False
+    assert demoted["real_money"] is False
 
 
 @pytest.mark.asyncio
