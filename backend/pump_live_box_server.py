@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from approvals.queue import ApprovalQueue, ApprovalStatus, approval_fingerprint
+from backend.pump_sandbox_receipts import PumpSandboxReceiptBook
 from broker.base import Order
 from broker.crypto_sandbox import CryptoSandboxBroker
 from market.pump_shadow import PumpFunPracticeShadowBridge
@@ -48,17 +49,20 @@ input,select,button{font:inherit;border:1px solid var(--l);background:#071014;co
 <button id="approve" class="approve" type="button" disabled>2 · Approve + simulate</button>
 </div></section><section class="box">
 <div class="metric"><span>Sandbox cash</span><strong id="cash">…</strong></div>
+<div class="metric"><span>Sandbox equity</span><strong id="equity">…</strong></div>
+<div class="metric"><span>Sandbox P&amp;L</span><strong id="pnl">…</strong></div>
 <div class="metric"><span>Evidence authority</span><strong id="authority">none</strong></div>
 <div class="metric"><span>Evidence fingerprint</span><strong id="efp">unbound</strong></div>
 <div class="metric"><span>Proposal fingerprint</span><strong id="pfp">unbound</strong></div>
+<div class="metric"><span>Last receipt</span><strong id="receipt">unrecorded</strong></div>
 <div class="truth">“Live” means current evidence, not live trading. This surface has no Pump network request, wallet connection, signing, funding, minting, or real-money execution.</div>
 </section></div><pre id="result">Ready.</pre>
 <script>
 const R=document.getElementById('result'),A=document.getElementById('approve');let id=null;
 document.getElementById('observed-at').value=new Date().toISOString();
-async function wallet(){const r=await fetch('/api/wallet'),d=await r.json();document.getElementById('cash').textContent='$'+Number(d.cash).toFixed(2)}
+async function wallet(){const r=await fetch('/api/wallet'),d=await r.json();document.getElementById('cash').textContent='$'+Number(d.cash).toFixed(2);document.getElementById('equity').textContent='$'+Number(d.equity).toFixed(2);document.getElementById('pnl').textContent=(Number(d.pnl_total)>=0?'+':'')+'$'+Number(d.pnl_total).toFixed(2)}
 document.getElementById('bind').onclick=async()=>{id=null;A.disabled=true;const evidence={source_url:document.getElementById('source-url').value,symbol:document.getElementById('symbol').value,mint:document.getElementById('mint').value,price:Number(document.getElementById('price').value),observed_at:document.getElementById('observed-at').value};const r=await fetch('/api/proposals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({evidence,qty:Number(document.getElementById('qty').value),side:document.getElementById('side').value})}),d=await r.json();R.textContent=JSON.stringify(d,null,2);if(d.status==='pending'){id=d.proposal_id;A.disabled=false;document.getElementById('authority').textContent=d.evidence.authority;document.getElementById('efp').textContent=d.evidence.fingerprint.slice(0,14)+'…';document.getElementById('pfp').textContent=d.proposal_fingerprint.slice(0,14)+'…'}};
-A.onclick=async()=>{if(!id)return;A.disabled=true;const r=await fetch('/api/proposals/'+encodeURIComponent(id)+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}),d=await r.json();R.textContent=JSON.stringify(d,null,2);await wallet()};
+A.onclick=async()=>{if(!id)return;A.disabled=true;const r=await fetch('/api/proposals/'+encodeURIComponent(id)+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}),d=await r.json();R.textContent=JSON.stringify(d,null,2);if(d.receipt&&d.receipt.receipt_fingerprint){document.getElementById('receipt').textContent=d.receipt.receipt_fingerprint.slice(0,14)+'…'}await wallet()};
 wallet();
 </script></main></body></html>"""
 
@@ -66,9 +70,18 @@ wallet();
 class PumpLiveBoxSession:
     _DEFAULT = object()
 
-    def __init__(self, initial_cash=100.0, *, state_path=_DEFAULT, session_id=None):
-        self.broker = CryptoSandboxBroker(initial_cash=float(initial_cash))
+    def __init__(
+        self,
+        initial_cash=100.0,
+        *,
+        state_path=_DEFAULT,
+        session_id=None,
+        audit_path=None,
+    ):
+        initial_cash = float(initial_cash)
+        self.broker = CryptoSandboxBroker(initial_cash=initial_cash)
         self.bridge = PumpFunPracticeShadowBridge()
+        self.receipts = PumpSandboxReceiptBook(initial_cash, audit_path=audit_path)
         if state_path is self._DEFAULT:
             self.queue = ApprovalQueue(session_id=session_id)
         else:
@@ -85,13 +98,7 @@ class PumpLiveBoxSession:
     async def wallet(self):
         with self._lock:
             await self._connect()
-            return {
-                **await self.broker.get_account_summary(),
-                "status": "ok",
-                "authority": "sandbox-simulation-only",
-                "real_money": False,
-                "live_execution": False,
-            }
+            return await self.receipts.portfolio(self.broker)
 
     async def propose(self, evidence, qty, side):
         with self._lock:
@@ -186,6 +193,7 @@ class PumpLiveBoxSession:
             if not self.queue.approval_is_intact(request.proposal_id):
                 raise RuntimeError("approval fingerprint mismatch")
             approved = self.queue.get(request.proposal_id)
+            proposal_fingerprint = approval_fingerprint(request.order, request.evaluation)
             if not self.queue.begin_execution(request.proposal_id):
                 raise RuntimeError("execution could not begin")
             execution = await self.broker.submit_order(request.order)
@@ -203,13 +211,23 @@ class PumpLiveBoxSession:
             order_id = execution.get("order_id")
             if not order_id or not self.queue.mark_executed(request.proposal_id, order_id):
                 raise RuntimeError("execution receipt could not be persisted")
+            wallet = await self.receipts.portfolio(self.broker)
+            receipt = await self.receipts.record_execution(
+                request=request,
+                proposal_fingerprint=proposal_fingerprint,
+                approval_fingerprint=(approved.approved_fingerprint if approved else None),
+                execution=execution,
+                wallet=wallet,
+            )
             return {
                 "status": "executed",
                 "proposal_id": request.proposal_id,
+                "proposal_fingerprint": proposal_fingerprint,
                 "approval_fingerprint": approved.approved_fingerprint if approved else None,
                 "pump_observation_fingerprint": request.evaluation["pump_observation_fingerprint"],
                 "execution": execution,
-                "wallet": await self.broker.get_account_summary(),
+                "receipt": receipt,
+                "wallet": wallet,
                 "authority": "sandbox-simulation-only",
                 "real_money": False,
                 "live_execution": False,
@@ -303,7 +321,11 @@ class Handler(BaseHTTPRequestHandler):
 def serve(host="127.0.0.1", port=8768):
     server = ThreadingHTTPServer((host, port), Handler)
     server.session = PumpLiveBoxSession(
-        float(os.getenv("SLEEPWEALTH_CRYPTO_SANDBOX_CASH", "100"))
+        float(os.getenv("SLEEPWEALTH_CRYPTO_SANDBOX_CASH", "100")),
+        audit_path=os.getenv(
+            "SLEEPWEALTH_PUMP_AUDIT_LOG",
+            "/tmp/sleepwealth-pump-live-box-audit.jsonl",
+        ),
     )
     try:
         server.serve_forever()
