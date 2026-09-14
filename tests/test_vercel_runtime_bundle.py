@@ -1,10 +1,16 @@
 import hashlib
+import json
 from pathlib import Path
+
+import pytest
 
 from scripts.package_vercel_runtime import (
     FORBIDDEN_RUNTIME_PATHS,
     RUNTIME_FILES,
+    VERCEL_FUNCTION_ENTRYPOINT,
+    VERCEL_ROUTE,
     package_runtime,
+    validate_vercel_config,
 )
 
 
@@ -21,6 +27,13 @@ def test_runtime_bundle_is_exact_head_and_non_authorizing(tmp_path):
     assert "paper/sandbox simulation only" in manifest["authority_ceiling"]
     assert manifest["fingerprint"].startswith("vercel-runtime-v1:")
     assert (output / "runtime-bundle.json").is_file()
+
+    deployment = manifest["deployment_contract"]
+    assert deployment["framework"] == "other"
+    assert deployment["function_entrypoint"] == VERCEL_FUNCTION_ENTRYPOINT
+    assert deployment["build_command"] == "auto"
+    assert deployment["output_directory"] == "auto"
+    assert deployment["route_destination"] == VERCEL_ROUTE["dest"]
 
     packaged = {row["path"] for row in manifest["files"]}
     assert packaged == set(RUNTIME_FILES)
@@ -53,3 +66,43 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "broker/mock.py" in packaged
     assert "broker/crypto_sandbox.py" in packaged
     assert "backend/pump_live_box_server.py" in packaged
+
+
+def test_vercel_config_pins_the_function_runtime_without_static_build_override():
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads((root / "vercel.json").read_text(encoding="utf-8"))
+
+    contract = validate_vercel_config(config)
+
+    assert config["framework"] is None
+    assert "buildCommand" not in config
+    assert "outputDirectory" not in config
+    assert contract["function_entrypoint"] == "api/index.py"
+    assert contract["build_command"] == "auto"
+    assert contract["output_directory"] == "auto"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("buildCommand", "python build.py"),
+        ("outputDirectory", "public"),
+    ],
+)
+def test_vercel_config_rejects_custom_build_or_static_output_drift(key, value):
+    config = {
+        "framework": None,
+        "routes": [dict(VERCEL_ROUTE)],
+        key: value,
+    }
+
+    with pytest.raises(RuntimeError, match=key):
+        validate_vercel_config(config)
+
+
+def test_vercel_config_requires_explicit_other_framework_and_canonical_route():
+    with pytest.raises(RuntimeError, match="Other framework"):
+        validate_vercel_config({"routes": [dict(VERCEL_ROUTE)]})
+
+    with pytest.raises(RuntimeError, match="api/index.py route"):
+        validate_vercel_config({"framework": None, "routes": []})
