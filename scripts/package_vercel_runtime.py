@@ -37,6 +37,7 @@ RUNTIME_FILES = (
     "execution/__init__.py",
     "execution/executor.py",
     "execution/modes.py",
+    "gate/pump_money_boundary.py",
     "gate/pump_practice_graduation.py",
     "market/__init__.py",
     "market/external_sources.py",
