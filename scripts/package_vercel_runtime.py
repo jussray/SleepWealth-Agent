@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import shutil
@@ -21,6 +22,7 @@ RUNTIME_FILES = (
     "backend/server.py",
     "backend/external_observers.py",
     "backend/pump_live_box_server.py",
+    "backend/pump_sandbox_receipts.py",
     "backend/runtime_identity.py",
     "broker/__init__.py",
     "broker/base.py",
@@ -34,6 +36,8 @@ RUNTIME_FILES = (
     "execution/__init__.py",
     "execution/executor.py",
     "execution/modes.py",
+    "gate/__init__.py",
+    "gate/pump_practice_graduation.py",
     "market/__init__.py",
     "market/external_sources.py",
     "market/lanes.py",
@@ -123,6 +127,44 @@ def vercel_deployment_contract(root: Path) -> dict:
     return validate_vercel_config(config)
 
 
+def _local_module_paths(root: Path, module: str) -> tuple[str, ...]:
+    if not module:
+        return ()
+    relative = module.replace(".", "/")
+    candidates = (f"{relative}.py", f"{relative}/__init__.py")
+    return tuple(path for path in candidates if (root / path).is_file())
+
+
+def missing_runtime_imports(root: Path, runtime_files: tuple[str, ...] = RUNTIME_FILES) -> list[str]:
+    """Return first-party Python imports present in the repo but absent from the bundle."""
+    packaged = set(runtime_files)
+    missing: set[str] = set()
+    for relative in runtime_files:
+        if not relative.endswith(".py"):
+            continue
+        source = root / relative
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=relative)
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules.append(node.module)
+            for module in modules:
+                local_paths = _local_module_paths(root, module)
+                if local_paths and not any(path in packaged for path in local_paths):
+                    missing.update(local_paths)
+    return sorted(missing)
+
+
+def validate_runtime_import_closure(root: Path, runtime_files: tuple[str, ...] = RUNTIME_FILES) -> None:
+    missing = missing_runtime_imports(root, runtime_files)
+    if missing:
+        raise RuntimeError(
+            "Vercel runtime is missing first-party import dependencies: " + ", ".join(missing)
+        )
+
+
 def package_runtime(root: Path, output: Path, source_sha: str | None = None) -> dict:
     root = root.resolve()
     output = output.resolve()
@@ -131,6 +173,7 @@ def package_runtime(root: Path, output: Path, source_sha: str | None = None) -> 
         raise ValueError("runtime bundle requires an exact 40-character git SHA")
 
     deployment_contract = vercel_deployment_contract(root)
+    validate_runtime_import_closure(root)
 
     allowed = set(RUNTIME_FILES)
     forbidden = set(FORBIDDEN_RUNTIME_PATHS)
