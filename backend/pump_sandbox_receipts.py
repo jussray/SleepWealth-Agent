@@ -6,24 +6,50 @@ wallet, broker, signing, funding, transfer, or real-money authority.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from typing import Any
+import os
+from math import isfinite
+from pathlib import Path
+from typing import Any, Iterable, Mapping
 
 from audit.logger import AuditLogger
 
 
-def _fingerprint(payload: dict[str, Any]) -> str:
+def _fingerprint(payload: object) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-class PumpSandboxReceiptBook:
-    """Build P&L snapshots and hash-chained simulated-execution receipts."""
+def _finite_number(value: object, *, name: str, minimum: float | None = None) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"practice state {name} must be numeric") from exc
+    if not isfinite(number):
+        raise RuntimeError(f"practice state {name} must be finite")
+    if minimum is not None and number < minimum:
+        raise RuntimeError(f"practice state {name} must be >= {minimum}")
+    return number
 
-    def __init__(self, initial_cash: float, audit_path: str | None = None):
+
+class PumpSandboxReceiptBook:
+    """Build P&L snapshots, execution receipts, and durable sandbox practice state."""
+
+    STATE_SCHEMA = "pump-practice-state-v1"
+
+    def __init__(
+        self,
+        initial_cash: float,
+        audit_path: str | None = None,
+        practice_state_path: str | None = None,
+    ):
         self.initial_cash = float(initial_cash)
         self.audit = AuditLogger(audit_path) if audit_path else None
+        self.practice_state_path = Path(practice_state_path) if practice_state_path else None
+        if self.practice_state_path is not None:
+            self.practice_state_path.parent.mkdir(parents=True, exist_ok=True)
 
     async def portfolio(self, broker) -> dict[str, Any]:
         account = await broker.get_account_summary()
@@ -58,6 +84,178 @@ class PumpSandboxReceiptBook:
             "authority": "sandbox-simulation-only",
             "status": "ok",
         }
+
+    def _state_payload(self, broker, receipts: Iterable[Mapping[str, object]]) -> dict[str, Any]:
+        return {
+            "schema": self.STATE_SCHEMA,
+            "initial_cash": self.initial_cash,
+            "broker": {
+                "cash": float(broker.cash),
+                "positions": {
+                    str(symbol).upper(): float(qty)
+                    for symbol, qty in sorted(broker.positions.items())
+                    if float(qty) != 0.0
+                },
+                "market_prices": {
+                    str(symbol).upper(): float(price)
+                    for symbol, price in sorted(broker.market_prices.items())
+                },
+                "order_counter": int(broker.order_counter),
+            },
+            "execution_receipts": [dict(receipt) for receipt in receipts],
+            "authority": "sandbox-simulation-only",
+            "real_money": False,
+            "live_execution": False,
+        }
+
+    def _atomic_write_state(self, snapshot: Mapping[str, object]) -> None:
+        if self.practice_state_path is None:
+            return
+        path = self.practice_state_path
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        encoded = (json.dumps(snapshot, sort_keys=True, default=str) + "\n").encode("utf-8")
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(encoded)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    async def persist_state(
+        self,
+        broker,
+        receipts: Iterable[Mapping[str, object]],
+    ) -> dict[str, object]:
+        if self.practice_state_path is None:
+            return {
+                "classification": "UNCONFIGURED",
+                "persisted": False,
+                "reason": "no durable practice state path configured",
+                "real_money": False,
+                "live_execution": False,
+            }
+        payload = self._state_payload(broker, receipts)
+        fingerprint = _fingerprint(payload)
+        snapshot = {
+            **payload,
+            "state_fingerprint": fingerprint,
+            "state_cookie": f"pump-practice-state-v1:{fingerprint[:24]}",
+        }
+        await asyncio.to_thread(self._atomic_write_state, snapshot)
+        return {
+            "classification": "PERSISTED_UNANCHORED",
+            "persisted": True,
+            "state_fingerprint": fingerprint,
+            "state_cookie": snapshot["state_cookie"],
+            "path_configured": True,
+            "trusted": False,
+            "reason": "atomic local sandbox snapshot persisted; no independent trust anchor claimed",
+            "real_money": False,
+            "live_execution": False,
+        }
+
+    def _read_state_sync(self) -> dict[str, object] | None:
+        if self.practice_state_path is None or not self.practice_state_path.exists():
+            return None
+        try:
+            value = json.loads(self.practice_state_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"practice state is unreadable: {exc}") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError("practice state must be a JSON object")
+        supplied = str(value.get("state_fingerprint") or "").lower()
+        payload = {
+            key: item
+            for key, item in value.items()
+            if key not in {"state_fingerprint", "state_cookie"}
+        }
+        if len(supplied) != 64 or supplied != _fingerprint(payload):
+            raise RuntimeError("practice state fingerprint mismatch")
+        if payload.get("schema") != self.STATE_SCHEMA:
+            raise RuntimeError("practice state schema mismatch")
+        if payload.get("authority") != "sandbox-simulation-only":
+            raise RuntimeError("practice state authority boundary changed")
+        if payload.get("real_money") is not False or payload.get("live_execution") is not False:
+            raise RuntimeError("practice state claims live or real-money capability")
+        persisted_initial = _finite_number(payload.get("initial_cash"), name="initial_cash", minimum=0.0)
+        if abs(persisted_initial - self.initial_cash) > 1e-9:
+            raise RuntimeError("practice state initial cash does not match configured sandbox")
+        broker_state = payload.get("broker")
+        rows = payload.get("execution_receipts")
+        if not isinstance(broker_state, dict):
+            raise RuntimeError("practice state broker snapshot is missing")
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise RuntimeError("practice state execution receipts are invalid")
+        return payload
+
+    async def restore_state(self, broker) -> list[dict[str, object]]:
+        payload = await asyncio.to_thread(self._read_state_sync)
+        if payload is None:
+            return []
+        broker_state = payload["broker"]
+        assert isinstance(broker_state, dict)
+        cash = _finite_number(broker_state.get("cash"), name="cash", minimum=0.0)
+        positions_raw = broker_state.get("positions")
+        prices_raw = broker_state.get("market_prices")
+        if not isinstance(positions_raw, dict) or not isinstance(prices_raw, dict):
+            raise RuntimeError("practice state positions/prices are invalid")
+        positions: dict[str, float] = {}
+        for symbol, qty in positions_raw.items():
+            key = str(symbol).upper().strip()
+            if not key:
+                raise RuntimeError("practice state contains an empty position symbol")
+            positions[key] = _finite_number(qty, name=f"position[{key}]", minimum=0.0)
+        prices: dict[str, float] = {}
+        for symbol, price in prices_raw.items():
+            key = str(symbol).upper().strip()
+            if not key:
+                raise RuntimeError("practice state contains an empty price symbol")
+            prices[key] = _finite_number(price, name=f"price[{key}]", minimum=1e-12)
+        try:
+            order_counter = int(broker_state.get("order_counter", 0))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("practice state order counter is invalid") from exc
+        if order_counter < 0:
+            raise RuntimeError("practice state order counter must be non-negative")
+
+        broker.cash = cash
+        broker.positions = positions
+        broker.market_prices = prices
+        broker.order_counter = order_counter
+        broker.orders = {}
+        rows = [dict(row) for row in payload["execution_receipts"]]
+        wallet = await self.portfolio(broker)
+        if rows:
+            last = rows[-1]
+            try:
+                receipt_cash = float(last.get("sandbox_cash"))
+                receipt_equity = float(last.get("sandbox_equity"))
+                receipt_pnl = float(last.get("sandbox_pnl_total"))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("practice state final receipt outcome is invalid") from exc
+            if (
+                not isfinite(receipt_cash)
+                or not isfinite(receipt_equity)
+                or not isfinite(receipt_pnl)
+                or abs(receipt_cash - float(wallet["cash"])) > 1e-9
+                or abs(receipt_equity - float(wallet["equity"])) > 1e-9
+                or abs(receipt_pnl - float(wallet["pnl_total"])) > 1e-9
+                or str(last.get("pnl_fingerprint") or "").lower()
+                != str(wallet.get("pnl_fingerprint") or "").lower()
+            ):
+                raise RuntimeError("practice state final outcome continuity mismatch")
+        elif (
+            abs(float(wallet["cash"]) - self.initial_cash) > 1e-9
+            or wallet["positions"]
+            or abs(float(wallet["pnl_total"])) > 1e-9
+        ):
+            raise RuntimeError("practice state has portfolio mutations without execution receipts")
+        return rows
 
     async def record_execution(
         self,

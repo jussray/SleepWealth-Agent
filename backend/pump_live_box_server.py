@@ -80,13 +80,18 @@ class PumpLiveBoxSession:
         state_path=_DEFAULT,
         session_id=None,
         audit_path=None,
+        practice_state_path=None,
         minimum_practice_executions=20,
         minimum_practice_round_trips=3,
     ):
         initial_cash = float(initial_cash)
         self.broker = CryptoSandboxBroker(initial_cash=initial_cash)
         self.bridge = PumpFunPracticeShadowBridge()
-        self.receipts = PumpSandboxReceiptBook(initial_cash, audit_path=audit_path)
+        self.receipts = PumpSandboxReceiptBook(
+            initial_cash,
+            audit_path=audit_path,
+            practice_state_path=practice_state_path,
+        )
         self.execution_receipts = []
         self.minimum_practice_executions = int(minimum_practice_executions)
         self.minimum_practice_round_trips = int(minimum_practice_round_trips)
@@ -101,6 +106,7 @@ class PumpLiveBoxSession:
         if not self._connected:
             if not await self.broker.connect():
                 raise RuntimeError("sandbox connection failed")
+            self.execution_receipts = await self.receipts.restore_state(self.broker)
             self._connected = True
 
     async def wallet(self):
@@ -239,6 +245,10 @@ class PumpLiveBoxSession:
                 wallet=wallet,
             )
             self.execution_receipts.append(receipt)
+            practice_state = await self.receipts.persist_state(
+                self.broker,
+                self.execution_receipts,
+            )
             return {
                 "status": "executed",
                 "proposal_id": request.proposal_id,
@@ -247,6 +257,7 @@ class PumpLiveBoxSession:
                 "pump_observation_fingerprint": request.evaluation["pump_observation_fingerprint"],
                 "execution": execution,
                 "receipt": receipt,
+                "practice_state": practice_state,
                 "wallet": wallet,
                 "authority": "sandbox-simulation-only",
                 "real_money": False,
@@ -348,6 +359,10 @@ def serve(host="127.0.0.1", port=8768):
         audit_path=os.getenv(
             "SLEEPWEALTH_PUMP_AUDIT_LOG",
             "/tmp/sleepwealth-pump-live-box-audit.jsonl",
+        ),
+        practice_state_path=os.getenv(
+            "SLEEPWEALTH_PUMP_PRACTICE_STATE",
+            "/tmp/sleepwealth-pump-live-box-practice-state.json",
         ),
         minimum_practice_executions=int(
             os.getenv("SLEEPWEALTH_PUMP_MIN_PRACTICE_EXECUTIONS", "20")

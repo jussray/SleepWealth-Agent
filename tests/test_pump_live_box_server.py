@@ -46,6 +46,7 @@ async def test_live_box_changes_cash_only_after_explicit_sandbox_approval():
     assert executed["receipt"]["real_money"] is False
     assert executed["receipt"]["live_execution"] is False
     assert len(executed["receipt"]["receipt_fingerprint"]) == 64
+    assert executed["practice_state"]["classification"] == "UNCONFIGURED"
     assert after["cash"] == pytest.approx(95.0)
     assert after["equity"] == pytest.approx(100.0)
     assert after["pnl_total"] == pytest.approx(0.0)
@@ -168,6 +169,95 @@ async def test_practice_graduation_reaches_eligibility_review_only_after_evidenc
     assert after["live_execution"] is False
     assert after["authority"] == "none"
     assert len(after["fingerprint"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_practice_history_survives_restart_with_exact_sandbox_outcome(tmp_path):
+    audit_path = tmp_path / "persistent-audit.jsonl"
+    practice_state_path = tmp_path / "persistent-practice-state.json"
+    first = PumpLiveBoxSession(
+        100,
+        state_path=None,
+        session_id="pump-persistent-first",
+        audit_path=str(audit_path),
+        practice_state_path=str(practice_state_path),
+        minimum_practice_executions=2,
+        minimum_practice_round_trips=1,
+    )
+
+    buy = await first.propose(evidence(price=0.5), 10, "buy")
+    bought = await first.approve(buy["proposal_id"])
+    assert bought["practice_state"]["classification"] == "PERSISTED_UNANCHORED"
+    assert bought["practice_state"]["persisted"] is True
+    assert bought["practice_state"]["trusted"] is False
+    sell = await first.propose(evidence(price=0.75), 10, "sell")
+    sold = await first.approve(sell["proposal_id"])
+    assert sold["practice_state"]["classification"] == "PERSISTED_UNANCHORED"
+    assert practice_state_path.exists()
+
+    snapshot = json.loads(practice_state_path.read_text(encoding="utf-8"))
+    assert snapshot["schema"] == "pump-practice-state-v1"
+    assert snapshot["authority"] == "sandbox-simulation-only"
+    assert snapshot["real_money"] is False
+    assert snapshot["live_execution"] is False
+    assert len(snapshot["state_fingerprint"]) == 64
+    assert len(snapshot["execution_receipts"]) == 2
+
+    restarted = PumpLiveBoxSession(
+        100,
+        state_path=None,
+        session_id="pump-persistent-second",
+        audit_path=str(audit_path),
+        practice_state_path=str(practice_state_path),
+        minimum_practice_executions=2,
+        minimum_practice_round_trips=1,
+    )
+    wallet = await restarted.wallet()
+    graduation = await restarted.graduation()
+
+    assert wallet["cash"] == pytest.approx(102.5)
+    assert wallet["equity"] == pytest.approx(102.5)
+    assert wallet["pnl_total"] == pytest.approx(2.5)
+    assert graduation["classification"] == "READY_FOR_ELIGIBILITY_REVIEW"
+    assert graduation["metrics"]["execution_count"] == 2
+    assert graduation["metrics"]["completed_round_trips"] == 1
+    assert graduation["metrics"]["pnl_total"] == pytest.approx(2.5)
+    assert graduation["platform_eligibility_verified"] is False
+    assert graduation["execution_authorized"] is False
+    assert graduation["real_money"] is False
+    assert graduation["live_execution"] is False
+
+
+@pytest.mark.asyncio
+async def test_practice_history_restart_fails_closed_on_snapshot_tamper(tmp_path):
+    practice_state_path = tmp_path / "tampered-practice-state.json"
+    session = PumpLiveBoxSession(
+        100,
+        state_path=None,
+        session_id="pump-persistent-tamper-first",
+        audit_path=str(tmp_path / "tampered-practice-audit.jsonl"),
+        practice_state_path=str(practice_state_path),
+        minimum_practice_executions=1,
+        minimum_practice_round_trips=0,
+    )
+    proposal = await session.propose(evidence(price=0.5), 10, "buy")
+    await session.approve(proposal["proposal_id"])
+
+    snapshot = json.loads(practice_state_path.read_text(encoding="utf-8"))
+    snapshot["broker"]["cash"] += 1.0
+    practice_state_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    restarted = PumpLiveBoxSession(
+        100,
+        state_path=None,
+        session_id="pump-persistent-tamper-second",
+        audit_path=str(tmp_path / "tampered-practice-audit.jsonl"),
+        practice_state_path=str(practice_state_path),
+        minimum_practice_executions=1,
+        minimum_practice_round_trips=0,
+    )
+    with pytest.raises(RuntimeError, match="practice state fingerprint mismatch"):
+        await restarted.wallet()
 
 
 @pytest.mark.asyncio

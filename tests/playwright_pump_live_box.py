@@ -30,6 +30,29 @@ def wait_for_health():
     raise RuntimeError("Pump Live Box failed health check")
 
 
+def start_server(env):
+    server = subprocess.Popen(
+        [sys.executable, "-m", "backend.pump_live_box_server", "--host", "127.0.0.1", "--port", "8768"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    wait_for_health()
+    return server
+
+
+def stop_server(server):
+    if server is None or server.poll() is not None:
+        return
+    server.terminate()
+    try:
+        server.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        server.kill()
+        server.wait(timeout=5)
+
+
 def pump_evidence(price):
     return {
         "source_url": "https://pump.fun/coin/MOM8",
@@ -45,19 +68,14 @@ def main():
     env = os.environ.copy()
     env["SLEEPWEALTH_APPROVAL_STATE"] = "/tmp/pump-live-box-approvals.json"
     env["SLEEPWEALTH_PUMP_AUDIT_LOG"] = "/tmp/pump-live-box-audit.jsonl"
+    env["SLEEPWEALTH_PUMP_PRACTICE_STATE"] = "/tmp/pump-live-box-practice-state.json"
     env["SLEEPWEALTH_PUMP_MIN_PRACTICE_EXECUTIONS"] = "2"
     env["SLEEPWEALTH_PUMP_MIN_PRACTICE_ROUND_TRIPS"] = "1"
     Path(env["SLEEPWEALTH_APPROVAL_STATE"]).unlink(missing_ok=True)
     Path(env["SLEEPWEALTH_PUMP_AUDIT_LOG"]).unlink(missing_ok=True)
-    server = subprocess.Popen(
-        [sys.executable, "-m", "backend.pump_live_box_server", "--host", "127.0.0.1", "--port", "8768"],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    Path(env["SLEEPWEALTH_PUMP_PRACTICE_STATE"]).unlink(missing_ok=True)
+    server = start_server(env)
     try:
-        wait_for_health()
         proof = {"source_sha": SOURCE_SHA, "surface": "pump-live-box", "checks": [], "real_money": False, "live_execution": False}
         with sync_playwright() as p:
             browser = p.chromium.launch()
@@ -133,7 +151,11 @@ def main():
             assert executed["receipt"]["classification"] == "SIMULATED_EXECUTION_RECEIPT"
             assert executed["receipt"]["audit"]["classification"] == "OBSERVED_UNANCHORED"
             assert executed["receipt"]["audit"]["trusted"] is False
+            assert executed["practice_state"]["classification"] == "PERSISTED_UNANCHORED"
+            assert executed["practice_state"]["persisted"] is True
+            assert executed["practice_state"]["trusted"] is False
             assert len(executed["receipt"]["receipt_fingerprint"]) == 64
+            assert len(executed["practice_state"]["state_fingerprint"]) == 64
             assert page.locator("#cash").inner_text() == "$95.00"
             assert page.locator("#equity").inner_text() == "$100.00"
             assert page.locator("#pnl").inner_text() == "+$0.00"
@@ -161,6 +183,8 @@ def main():
             assert sold["receipt"]["sandbox_pnl_total"] == 2.5
             assert sold["receipt"]["audit"]["classification"] == "OBSERVED_UNANCHORED"
             assert sold["receipt"]["audit"]["trusted"] is False
+            assert sold["practice_state"]["classification"] == "PERSISTED_UNANCHORED"
+            assert sold["practice_state"]["persisted"] is True
             assert sold["real_money"] is False
             assert sold["live_execution"] is False
             wallet_after_sell = page.request.get(BASE_URL.rstrip("/") + "/api/wallet").json()
@@ -194,6 +218,7 @@ def main():
             proof["checks"].append("sandbox_round_trip_pnl_receipted")
             proof["sell_receipt_fingerprint"] = sold["receipt"]["receipt_fingerprint"]
             proof["sell_audit_entry_hash"] = sold["receipt"]["audit"]["entry_hash"]
+            proof["practice_state_fingerprint"] = sold["practice_state"]["state_fingerprint"]
             proof["pnl_total"] = wallet_after_sell["pnl_total"]
 
             audit_records = [
@@ -205,12 +230,40 @@ def main():
             assert audit_records[1]["sandbox_pnl_total"] == 2.5
             proof["checks"].append("sandbox_audit_hash_chain")
 
+            persisted = json.loads(Path(env["SLEEPWEALTH_PUMP_PRACTICE_STATE"]).read_text(encoding="utf-8"))
+            assert persisted["schema"] == "pump-practice-state-v1"
+            assert len(persisted["execution_receipts"]) == 2
+            assert persisted["real_money"] is False
+            assert persisted["live_execution"] is False
+            assert len(persisted["state_fingerprint"]) == 64
+            proof["checks"].append("practice_snapshot_persisted")
+
+            stop_server(server)
+            server = start_server(env)
+            response = page.reload(wait_until="networkidle")
+            assert response and response.ok
+            page.wait_for_function("() => document.querySelector('#practice-samples').textContent === '2 / 2'")
+            page.wait_for_function("() => document.querySelector('#graduation').textContent === 'READY_FOR_ELIGIBILITY_REVIEW'")
+            assert page.locator("#cash").inner_text() == "$102.50"
+            assert page.locator("#equity").inner_text() == "$102.50"
+            assert page.locator("#pnl").inner_text() == "+$2.50"
+            restarted_graduation = page.request.get(BASE_URL.rstrip("/") + "/api/graduation").json()
+            assert restarted_graduation["metrics"]["execution_count"] == 2
+            assert restarted_graduation["metrics"]["completed_round_trips"] == 1
+            assert restarted_graduation["metrics"]["pnl_total"] == 2.5
+            assert restarted_graduation["platform_eligibility_verified"] is False
+            assert restarted_graduation["execution_authorized"] is False
+            assert restarted_graduation["real_money"] is False
+            assert restarted_graduation["live_execution"] is False
+            proof["checks"].append("practice_history_survives_process_restart")
+
             page.screenshot(path=str(ARTIFACT_DIR / "pump-live-box-desktop.png"), full_page=True)
             mobile = browser.new_page(viewport={"width": 390, "height": 844})
             assert mobile.goto(BASE_URL, wait_until="networkidle").ok
             assert mobile.get_by_text("PUMP LIVE BOX").is_visible()
             assert mobile.locator("#pnl").inner_text() == "+$2.50"
             mobile.wait_for_function("() => document.querySelector('#graduation').textContent === 'READY_FOR_ELIGIBILITY_REVIEW'")
+            assert mobile.locator("#practice-samples").inner_text() == "2 / 2"
             overflow = mobile.evaluate("() => document.documentElement.scrollWidth > document.documentElement.clientWidth")
             assert overflow is False
             mobile.screenshot(path=str(ARTIFACT_DIR / "pump-live-box-mobile.png"), full_page=True)
@@ -219,11 +272,7 @@ def main():
         (ARTIFACT_DIR / "pump-live-box-playwright-proof.json").write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n")
         print(json.dumps(proof, indent=2, sort_keys=True))
     finally:
-        server.terminate()
-        try:
-            server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            server.kill()
+        stop_server(server)
 
 
 if __name__ == "__main__":
