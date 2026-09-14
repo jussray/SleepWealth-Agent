@@ -43,7 +43,11 @@ class BaseBroker(ABC):
 
     @abstractmethod
     async def cancel_order(self, order_id: str) -> bool:
-        """Cancel by id."""
+        """Cancel one working order by id while preserving terminal status evidence."""
+
+    @abstractmethod
+    async def cancel_all(self) -> bool:
+        """Cancel every working order while preserving terminal cancellation evidence."""
 
     @abstractmethod
     async def get_order_status(self, order_id: str) -> dict:
@@ -56,3 +60,7 @@ class BaseBroker(ABC):
     @abstractmethod
     def is_paper_only(self) -> bool:
         """True if this adapter can never touch real money."""
+
+    @abstractmethod
+    def paper_proof(self) -> dict:
+        """Return non-secret broker/account evidence used by paper-only proof gates."""
