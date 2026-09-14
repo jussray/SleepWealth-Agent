@@ -14,6 +14,7 @@ from approvals.queue import ApprovalQueue, ApprovalStatus, approval_fingerprint
 from backend.pump_sandbox_receipts import PumpSandboxReceiptBook
 from broker.base import Order
 from broker.crypto_sandbox import CryptoSandboxBroker
+from gate.pump_money_boundary import pump_money_boundary
 from gate.pump_practice_graduation import evaluate_pump_practice_graduation
 from market.pump_shadow import PumpFunPracticeShadowBridge
 
@@ -85,6 +86,7 @@ class PumpLiveBoxSession:
         minimum_practice_round_trips=3,
     ):
         initial_cash = float(initial_cash)
+        self.money_boundary = self.boundary()
         self.broker = CryptoSandboxBroker(initial_cash=initial_cash)
         self.bridge = PumpFunPracticeShadowBridge()
         self.receipts = PumpSandboxReceiptBook(
@@ -102,7 +104,32 @@ class PumpLiveBoxSession:
         self._connected = False
         self._lock = threading.RLock()
 
+    @staticmethod
+    def _validate_money_boundary(receipt):
+        false_fields = (
+            "execution_authorized",
+            "real_money",
+            "live_execution",
+            "wallet_connection",
+            "funding",
+            "signing",
+            "brokerage_order_submission",
+        )
+        valid = (
+            receipt.get("classification") == "BLOCKED"
+            and receipt.get("authority") == "sandbox-simulation-only"
+            and receipt.get("override_effect") == "none"
+            and all(receipt.get(field) is False for field in false_fields)
+        )
+        if not valid:
+            raise RuntimeError("Pump money boundary invariant changed")
+        return receipt
+
+    def boundary(self):
+        return self._validate_money_boundary(pump_money_boundary())
+
     async def _connect(self):
+        self.money_boundary = self.boundary()
         if not self._connected:
             if not await self.broker.connect():
                 raise RuntimeError("sandbox connection failed")
@@ -128,6 +155,7 @@ class PumpLiveBoxSession:
     async def propose(self, evidence, qty, side):
         with self._lock:
             await self._connect()
+            boundary = self.boundary()
             observation = self.bridge.observe(evidence)
             mirror = self.bridge.mirror_to_practice(observation, self.broker)
             side = str(side).strip().lower()
@@ -152,6 +180,8 @@ class PumpLiveBoxSession:
                 "pump_public_evidence_fingerprint": observation.public_evidence_fingerprint,
                 "pump_mirror_fingerprint": mirror.mirror_fingerprint,
                 "pump_mint": observation.mint,
+                "pump_money_boundary_fingerprint": boundary["fingerprint"],
+                "pump_money_boundary_cookie": boundary["cookie"],
                 "evidence_authority": observation.authority,
                 "evidence_read_only": observation.read_only,
                 "authority_ceiling": "sandbox-simulation-only",
@@ -164,6 +194,7 @@ class PumpLiveBoxSession:
                     "status": "blocked",
                     "evaluation": evaluation,
                     "evidence": asdict(observation),
+                    "money_boundary": boundary,
                     "real_money": False,
                     "live_execution": False,
                 }
@@ -178,6 +209,7 @@ class PumpLiveBoxSession:
                 "evidence": asdict(observation),
                 "mirror": mirror.to_dict(),
                 "evaluation": evaluation,
+                "money_boundary": boundary,
                 "authority": "none-until-explicit-sandbox-approval",
                 "real_money": False,
                 "live_execution": False,
@@ -186,6 +218,7 @@ class PumpLiveBoxSession:
     async def approve(self, proposal_id):
         with self._lock:
             await self._connect()
+            current_boundary = self.boundary()
             request = self.queue.get(str(proposal_id))
             if request is None:
                 raise ValueError("proposal not found")
@@ -193,6 +226,17 @@ class PumpLiveBoxSession:
                 return {
                     "status": "blocked",
                     "reason": f"proposal status is {request.status.value}, not pending",
+                    "real_money": False,
+                    "live_execution": False,
+                }
+            if request.evaluation.get("pump_money_boundary_fingerprint") != current_boundary["fingerprint"]:
+                return {
+                    "status": "blocked",
+                    "reason": "Pump money boundary changed since proposal; bind current state into a new proposal",
+                    "proposal_id": request.proposal_id,
+                    "money_boundary_changed": True,
+                    "authority": "none",
+                    "money_boundary": current_boundary,
                     "real_money": False,
                     "live_execution": False,
                 }
@@ -259,6 +303,7 @@ class PumpLiveBoxSession:
                 "receipt": receipt,
                 "practice_state": practice_state,
                 "wallet": wallet,
+                "money_boundary": current_boundary,
                 "authority": "sandbox-simulation-only",
                 "real_money": False,
                 "live_execution": False,
@@ -303,6 +348,7 @@ class Handler(BaseHTTPRequestHandler):
                     "pump_network_access": "none",
                     "evidence_authority": "none",
                     "practice_graduation": "review-only",
+                    "money_boundary": self.session.boundary(),
                     "real_money": False,
                     "live_execution": False,
                 }
@@ -311,6 +357,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(asyncio.run(self.session.wallet()))
         if path == "/api/graduation":
             return self.json(asyncio.run(self.session.graduation()))
+        if path == "/api/money-boundary":
+            return self.json(self.session.boundary())
         return self.json({"status": "not_found"}, 404)
 
     def do_POST(self):
