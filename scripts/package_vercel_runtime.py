@@ -54,6 +54,12 @@ RUNTIME_FILES = (
     "public/mom8/logo.svg",
 )
 
+REQUIRED_STATIC_ASSETS = (
+    "public/mom8/index.html",
+    "public/mom8/styles.css",
+    "public/mom8/logo.svg",
+)
+
 FORBIDDEN_RUNTIME_PATHS = (
     "broker/alpaca.py",
     "broker/ibkr.py",
@@ -88,9 +94,12 @@ def package_runtime(root: Path, output: Path, source_sha: str | None = None) -> 
         raise ValueError("runtime bundle requires an exact 40-character git SHA")
 
     allowed = set(RUNTIME_FILES)
+    required_static = set(REQUIRED_STATIC_ASSETS)
     forbidden = set(FORBIDDEN_RUNTIME_PATHS)
     if allowed & forbidden:
         raise RuntimeError("runtime allowlist overlaps forbidden executable adapters")
+    if not required_static.issubset(allowed):
+        raise RuntimeError("deployment-critical static assets must be runtime-allowlisted")
 
     if output.exists():
         shutil.rmtree(output)
@@ -112,6 +121,11 @@ def package_runtime(root: Path, output: Path, source_sha: str | None = None) -> 
             }
         )
 
+    for relative in REQUIRED_STATIC_ASSETS:
+        destination = output / relative
+        if destination.stat().st_size <= 0:
+            raise RuntimeError(f"deployment-critical static asset is empty: {relative}")
+
     for relative in FORBIDDEN_RUNTIME_PATHS:
         if (output / relative).exists():
             raise RuntimeError(f"forbidden runtime path was packaged: {relative}")
@@ -120,6 +134,7 @@ def package_runtime(root: Path, output: Path, source_sha: str | None = None) -> 
         "schema": "sleepwealth-vercel-runtime-bundle-v1",
         "source_sha": source_sha,
         "files": sorted(entries, key=lambda row: str(row["path"])),
+        "required_static_assets": list(REQUIRED_STATIC_ASSETS),
         "authority_ceiling": "paper/sandbox simulation only; read-only public market observation",
         "live_execution": False,
         "real_money": False,
