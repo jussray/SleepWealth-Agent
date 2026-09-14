@@ -71,8 +71,9 @@ These are not suggestions. Tests enforce them.
 | `mock` | yes | never | in-memory, no network, used by CI |
 | `alpaca` | yes | disabled | paper-mode adapter only in this repository |
 
-Adding a broker: implement the 8 methods on `BaseBroker`, register it in
-`broker/factory.py`. The CLI picks it up with no other changes.
+Adding a broker: implement the 10 methods on `BaseBroker`, including `paper_proof` and
+the emergency `cancel_all` contract, then register it in `broker/factory.py`. The CLI
+picks it up with no other changes.
 
 ## CLI
 
