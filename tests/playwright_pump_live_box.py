@@ -42,7 +42,9 @@ def main():
     ARTIFACT_DIR.mkdir(exist_ok=True)
     env = os.environ.copy()
     env["SLEEPWEALTH_APPROVAL_STATE"] = "/tmp/pump-live-box-approvals.json"
+    env["SLEEPWEALTH_PUMP_AUDIT_LOG"] = "/tmp/pump-live-box-audit.jsonl"
     Path(env["SLEEPWEALTH_APPROVAL_STATE"]).unlink(missing_ok=True)
+    Path(env["SLEEPWEALTH_PUMP_AUDIT_LOG"]).unlink(missing_ok=True)
     server = subprocess.Popen(
         [sys.executable, "-m", "backend.pump_live_box_server", "--host", "127.0.0.1", "--port", "8768"],
         env=env,
@@ -62,6 +64,8 @@ def main():
             assert page.get_by_text("PUBLIC EVIDENCE · READ-ONLY").is_visible()
             assert page.get_by_text("SIMULATED EXECUTION ONLY").is_visible()
             assert page.locator("#cash").inner_text() == "$100.00"
+            assert page.locator("#equity").inner_text() == "$100.00"
+            assert page.locator("#pnl").inner_text() == "+$0.00"
 
             stale_response = page.request.post(
                 BASE_URL.rstrip("/") + "/api/proposals",
@@ -106,18 +110,71 @@ def main():
             proof["checks"].append("public_evidence_bound_non_mutating")
             proof["observation_fingerprint"] = bound["evidence"]["fingerprint"]
             proof["proposal_fingerprint"] = bound["proposal_fingerprint"]
+
             page.get_by_role("button", name="2 · Approve + simulate").click()
             page.wait_for_function("() => document.querySelector('#result').textContent.includes('\\\"status\\\": \\\"executed\\\"')")
             executed = json.loads(page.locator("#result").inner_text())
             assert executed["pump_observation_fingerprint"] == bound["evidence"]["fingerprint"]
             assert executed["execution"]["real_money"] is False
             assert executed["execution"]["wallet_mode"] == "sandbox"
+            assert executed["receipt"]["classification"] == "SIMULATED_EXECUTION_RECEIPT"
+            assert executed["receipt"]["audit"]["classification"] == "OBSERVED_UNANCHORED"
+            assert executed["receipt"]["audit"]["trusted"] is False
+            assert len(executed["receipt"]["receipt_fingerprint"]) == 64
             assert page.locator("#cash").inner_text() == "$95.00"
+            assert page.locator("#equity").inner_text() == "$100.00"
+            assert page.locator("#pnl").inner_text() == "+$0.00"
+            assert page.locator("#receipt").inner_text() != "unrecorded"
             proof["checks"].append("evidence_bound_approval_simulates_only")
+            proof["buy_receipt_fingerprint"] = executed["receipt"]["receipt_fingerprint"]
+            proof["buy_audit_entry_hash"] = executed["receipt"]["audit"]["entry_hash"]
+
+            sell_response = page.request.post(
+                BASE_URL.rstrip("/") + "/api/proposals",
+                data={"evidence": pump_evidence(0.75), "qty": 10, "side": "sell"},
+            )
+            assert sell_response.ok
+            sell = sell_response.json()
+            sell_approval = page.request.post(
+                BASE_URL.rstrip("/") + f"/api/proposals/{sell['proposal_id']}/approve",
+                data={},
+            )
+            assert sell_approval.ok
+            sold = sell_approval.json()
+            assert sold["status"] == "executed"
+            assert sold["execution"]["filled_price"] == 0.75
+            assert sold["receipt"]["sandbox_pnl_total"] == 2.5
+            assert sold["receipt"]["audit"]["classification"] == "OBSERVED_UNANCHORED"
+            assert sold["receipt"]["audit"]["trusted"] is False
+            assert sold["real_money"] is False
+            assert sold["live_execution"] is False
+            wallet_after_sell = page.request.get(BASE_URL.rstrip("/") + "/api/wallet").json()
+            assert wallet_after_sell["cash"] == 102.5
+            assert wallet_after_sell["equity"] == 102.5
+            assert wallet_after_sell["pnl_total"] == 2.5
+            page.evaluate("wallet()")
+            page.wait_for_function("() => document.querySelector('#pnl').textContent === '+$2.50'")
+            assert page.locator("#cash").inner_text() == "$102.50"
+            assert page.locator("#equity").inner_text() == "$102.50"
+            proof["checks"].append("sandbox_round_trip_pnl_receipted")
+            proof["sell_receipt_fingerprint"] = sold["receipt"]["receipt_fingerprint"]
+            proof["sell_audit_entry_hash"] = sold["receipt"]["audit"]["entry_hash"]
+            proof["pnl_total"] = wallet_after_sell["pnl_total"]
+
+            audit_records = [
+                json.loads(line)
+                for line in Path(env["SLEEPWEALTH_PUMP_AUDIT_LOG"]).read_text(encoding="utf-8").splitlines()
+            ]
+            assert len(audit_records) == 2
+            assert audit_records[1]["prev_hash"] == audit_records[0]["entry_hash"]
+            assert audit_records[1]["sandbox_pnl_total"] == 2.5
+            proof["checks"].append("sandbox_audit_hash_chain")
+
             page.screenshot(path=str(ARTIFACT_DIR / "pump-live-box-desktop.png"), full_page=True)
             mobile = browser.new_page(viewport={"width": 390, "height": 844})
             assert mobile.goto(BASE_URL, wait_until="networkidle").ok
             assert mobile.get_by_text("PUMP LIVE BOX").is_visible()
+            assert mobile.locator("#pnl").inner_text() == "+$2.50"
             overflow = mobile.evaluate("() => document.documentElement.scrollWidth > document.documentElement.clientWidth")
             assert overflow is False
             mobile.screenshot(path=str(ARTIFACT_DIR / "pump-live-box-mobile.png"), full_page=True)
