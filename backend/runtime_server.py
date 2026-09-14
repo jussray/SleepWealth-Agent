@@ -15,7 +15,11 @@ from engine.truth_mode import (
     build_capital_truth_receipt,
     build_paper_cycle_truth_receipt,
 )
+from engine.validator import RulesValidator
 from rules import load_rules
+
+
+MAX_CAPITAL_TRUTH_CYCLES = 500
 
 
 def health_payload() -> dict[str, object]:
@@ -50,6 +54,10 @@ def capital_truth_payload(payload: dict[str, object]) -> dict[str, object]:
     raw_cycles = payload.get("cycles")
     if not isinstance(raw_cycles, list):
         raise ValueError("cycles must be a JSON list")
+    if len(raw_cycles) > MAX_CAPITAL_TRUTH_CYCLES:
+        raise ValueError(
+            f"cycles supports at most {MAX_CAPITAL_TRUTH_CYCLES} paper records"
+        )
 
     cycles: list[FlipCycle] = []
     for item in raw_cycles:
@@ -58,6 +66,10 @@ def capital_truth_payload(payload: dict[str, object]) -> dict[str, object]:
         cycles.append(FlipCycle(**item))
 
     rules = load_rules()
+    valid, errors = RulesValidator().validate(rules)
+    if not valid:
+        raise ValueError("invalid SleepWealth rules: " + "; ".join(errors))
+
     history = CapitalLadder(rules).assess_history(cycles)
     current_fingerprint = payload.get("current_fingerprint")
     if current_fingerprint is not None and not isinstance(current_fingerprint, str):
