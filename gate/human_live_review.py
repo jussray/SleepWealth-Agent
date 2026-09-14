@@ -57,12 +57,14 @@ class HumanLiveReviewV1:
                 "current readiness classification",
                 "evidence identity",
                 "blocking conditions",
+                "broker-provider account eligibility or permission status",
             ],
             "forbidden_content": [
                 "broker credentials",
                 "wallet secrets",
                 "funding instructions",
                 "order submission instructions",
+                "unrelated product, repository, social, or platform-account signals presented as broker eligibility",
             ],
             "truth": (
                 "This receipt is for human review only. It cannot submit, fund, transfer, "

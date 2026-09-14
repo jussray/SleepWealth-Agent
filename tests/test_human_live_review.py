@@ -72,3 +72,16 @@ def test_receipt_constructor_cannot_be_flipped_to_executable():
             readiness_ready=True,
             execution_authorized=True,
         )
+
+
+def test_review_receipt_keeps_broker_eligibility_provider_scoped():
+    payload = prepare_human_live_review(
+        evidence(), readiness(), current_source_sha=SHA
+    ).to_dict()
+
+    assert "broker-provider account eligibility or permission status" in payload["allowed_content"]
+    assert any(
+        "unrelated product" in item and "broker eligibility" in item
+        for item in payload["forbidden_content"]
+    )
+    assert payload["execution_authorized"] is False
