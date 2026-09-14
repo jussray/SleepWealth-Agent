@@ -42,6 +42,31 @@ async def test_live_box_changes_cash_only_after_explicit_sandbox_approval():
 
 
 @pytest.mark.asyncio
+async def test_live_box_blocks_approval_when_newer_shadow_price_replaces_bound_price():
+    session = PumpLiveBoxSession(100, state_path=None, session_id="live-box-stale-test")
+    stale = await session.propose(evidence(price=0.5), 10, "buy")
+    current = await session.propose(evidence(price=0.75), 10, "buy")
+
+    blocked = await session.approve(stale["proposal_id"])
+    wallet_after_block = await session.wallet()
+
+    assert blocked["status"] == "blocked"
+    assert blocked["stale_evidence"] is True
+    assert blocked["bound_price"] == pytest.approx(0.5)
+    assert blocked["current_price"] == pytest.approx(0.75)
+    assert "new proposal" in blocked["reason"]
+    assert blocked["real_money"] is False
+    assert blocked["live_execution"] is False
+    assert wallet_after_block["cash"] == pytest.approx(100.0)
+
+    executed = await session.approve(current["proposal_id"])
+    wallet_after_current = await session.wallet()
+    assert executed["status"] == "executed"
+    assert executed["execution"]["filled_price"] == pytest.approx(0.75)
+    assert wallet_after_current["cash"] == pytest.approx(92.5)
+
+
+@pytest.mark.asyncio
 async def test_live_box_rejects_non_pump_source():
     session = PumpLiveBoxSession(100, state_path=None, session_id="live-box-test")
     bad = evidence()
