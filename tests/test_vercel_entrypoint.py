@@ -1,17 +1,17 @@
 import os
 
 from backend.pump_live_box_server import PumpLiveBoxSession
-from backend.server import SleepWealthHandler
+from backend.runtime_server import RuntimeIdentityHandler
 
 
-def test_vercel_entrypoint_uses_the_existing_paper_handler(monkeypatch):
+def test_vercel_entrypoint_uses_runtime_identity_paper_handler(monkeypatch):
     monkeypatch.delenv("SLEEPWEALTH_AUDIT_LOG", raising=False)
     monkeypatch.delenv("SLEEPWEALTH_APPROVAL_STATE", raising=False)
     monkeypatch.delenv("SLEEPWEALTH_APPROVAL_STATE_SCOPE", raising=False)
 
     from api.index import handler
 
-    assert issubclass(handler, SleepWealthHandler)
+    assert issubclass(handler, RuntimeIdentityHandler)
     assert os.environ["SLEEPWEALTH_AUDIT_LOG"] == "/tmp/sleepwealth-audit.log"
     assert (
         os.environ["SLEEPWEALTH_APPROVAL_STATE"]
