@@ -122,6 +122,74 @@ async def test_live_box_round_trip_emits_pnl_and_chained_audit_receipts(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_practice_graduation_reaches_review_only_after_evidence_floor(tmp_path):
+    session = PumpLiveBoxSession(
+        100,
+        state_path=None,
+        session_id="pump-practice-graduation-test",
+        audit_path=str(tmp_path / "graduation-audit.jsonl"),
+        minimum_practice_executions=2,
+        minimum_practice_round_trips=1,
+    )
+
+    before = await session.graduation()
+    assert before["classification"] == "PRACTICE_REQUIRED"
+    assert before["review_ready"] is False
+    assert "SIMULATED_EXECUTION_SAMPLE" in before["blockers"]
+    assert "COMPLETED_ROUND_TRIPS" in before["blockers"]
+    assert before["execution_authorized"] is False
+    assert before["money_movement_capability"] is False
+
+    buy = await session.propose(evidence(price=0.5), 10, "buy")
+    await session.approve(buy["proposal_id"])
+    middle = await session.graduation()
+    assert middle["classification"] == "PRACTICE_REQUIRED"
+    assert middle["metrics"]["execution_count"] == 1
+
+    sell = await session.propose(evidence(price=0.75), 10, "sell")
+    await session.approve(sell["proposal_id"])
+    after = await session.graduation()
+
+    assert after["classification"] == "READY_FOR_ADULT_LIVE_REVIEW"
+    assert after["review_ready"] is True
+    assert after["practice_evidence_complete"] is True
+    assert after["blockers"] == []
+    assert after["metrics"]["execution_count"] == 2
+    assert after["metrics"]["completed_round_trips"] == 1
+    assert after["metrics"]["pnl_total"] == pytest.approx(2.5)
+    assert after["execution_authorized"] is False
+    assert after["submit_capability"] is False
+    assert after["money_movement_capability"] is False
+    assert after["real_money"] is False
+    assert after["live_execution"] is False
+    assert after["authority"] == "none"
+    assert len(after["fingerprint"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_practice_graduation_fails_closed_when_execution_receipt_is_tampered(tmp_path):
+    session = PumpLiveBoxSession(
+        100,
+        state_path=None,
+        session_id="pump-practice-tamper-test",
+        audit_path=str(tmp_path / "tamper-audit.jsonl"),
+        minimum_practice_executions=1,
+        minimum_practice_round_trips=0,
+    )
+    proposal = await session.propose(evidence(price=0.5), 10, "buy")
+    await session.approve(proposal["proposal_id"])
+    session.execution_receipts[0]["receipt_fingerprint"] = "0" * 64
+
+    graduation = await session.graduation()
+
+    assert graduation["classification"] == "PRACTICE_REQUIRED"
+    assert graduation["review_ready"] is False
+    assert "RECEIPT_INTEGRITY" in graduation["blockers"]
+    assert graduation["execution_authorized"] is False
+    assert graduation["real_money"] is False
+
+
+@pytest.mark.asyncio
 async def test_live_box_rejects_non_pump_source():
     session = PumpLiveBoxSession(100, state_path=None, session_id="live-box-test")
     bad = evidence()
