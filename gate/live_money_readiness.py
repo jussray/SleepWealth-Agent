@@ -4,6 +4,8 @@ This module reports the repository's current execution ceiling. It does not
 accept caller-supplied booleans that could be mistaken for authority, and it
 never grants execution authority. External brokerage/account observations may
 be attached as evidence, but they cannot satisfy execution gates by themselves.
+Broker eligibility is provider-scoped: unrelated product, repository, social,
+or platform-account signals are never treated as brokerage eligibility proof.
 """
 
 from __future__ import annotations
@@ -141,6 +143,16 @@ def live_money_readiness(
                 else "broker factory exposes mock only; external broker execution is disabled"
             ),
             source="broker.factory",
+        ),
+        ReadinessCheck(
+            code="BROKER_ACCOUNT_ELIGIBILITY",
+            classification="UNKNOWN",
+            reason=(
+                "no broker-provider eligibility/account-permission receipt is bound to this "
+                "runtime; unrelated product, repository, social, or platform-account signals "
+                "cannot satisfy this check"
+            ),
+            source="broker-provider-authority",
         ),
         ReadinessCheck(
             code="LIVE_BROKER_SESSION_RECEIPT",
