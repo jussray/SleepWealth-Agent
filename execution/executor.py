@@ -125,24 +125,62 @@ class ExecutionManager:
             return await self._block(proposal_id, reason)
 
         self.active_orders[order_id] = proposal_id
-        if not self.approval_queue.mark_executed(proposal_id, order_id):
-            reason = "execution receipt could not be persisted; manual reconciliation required"
-            self.approval_queue.mark_reconcile_required(proposal_id, reason)
-            await self.audit_logger.log({
-                "event": "execution_reconcile_required",
-                "proposal_id": proposal_id,
-                "order_id": order_id,
-                "reason": reason,
-                "broker_result": result,
-            })
-            return {"error": reason}
-
         receipt = {
             **result,
             "order_id": order_id,
             "status": result.get("status", "submitted"),
+            "execution_confirmed": True,
         }
-        await self.audit_logger.log({
+
+        state_error = None
+        try:
+            state_persisted = self.approval_queue.mark_executed(proposal_id, order_id)
+        except Exception as exc:
+            state_persisted = False
+            state_error = f"{type(exc).__name__}: {exc}"
+
+        if not state_persisted:
+            reason = "execution confirmed but approval-state receipt could not be persisted"
+            if state_error:
+                reason = f"{reason}: {state_error}"
+
+            reconcile_persisted = False
+            reconcile_error = None
+            try:
+                reconcile_persisted = self.approval_queue.mark_reconcile_required(
+                    proposal_id,
+                    reason,
+                )
+            except Exception as exc:
+                reconcile_error = f"{type(exc).__name__}: {exc}"
+
+            audit_error = None
+            try:
+                await self.audit_logger.log({
+                    "event": "execution_reconcile_required",
+                    "proposal_id": proposal_id,
+                    "order_id": order_id,
+                    "reason": reason,
+                    "broker_result": result,
+                    "reconcile_state_persisted": reconcile_persisted,
+                    "reconcile_state_error": reconcile_error,
+                })
+            except Exception as exc:
+                audit_error = f"{type(exc).__name__}: {exc}"
+
+            return {
+                **receipt,
+                "completion_classification": "EXECUTED_STATE_DEGRADED",
+                "approval_state_persisted": False,
+                "reconciliation_required": True,
+                "state_error": state_error or "mark_executed returned false",
+                "reconcile_state_persisted": reconcile_persisted,
+                "reconcile_state_error": reconcile_error,
+                "audit_persisted": audit_error is None,
+                "audit_error": audit_error,
+            }
+
+        audit_event = {
             "event": "order_submitted",
             "proposal_id": proposal_id,
             "order_id": order_id,
@@ -154,8 +192,28 @@ class ExecutionManager:
             "market_data": market_data,
             "fresh_evaluation": fresh_evaluation,
             "broker_result": result,
-        })
-        return receipt
+        }
+        try:
+            audit_entry_hash = await self.audit_logger.log(audit_event)
+        except Exception as exc:
+            return {
+                **receipt,
+                "completion_classification": "EXECUTED_AUDIT_DEGRADED",
+                "approval_state_persisted": True,
+                "reconciliation_required": False,
+                "audit_persisted": False,
+                "audit_error": f"{type(exc).__name__}: {exc}",
+            }
+
+        return {
+            **receipt,
+            "completion_classification": "EXECUTED_AUDITED",
+            "approval_state_persisted": True,
+            "reconciliation_required": False,
+            "audit_persisted": True,
+            "audit_entry_hash": audit_entry_hash,
+            "audit_error": None,
+        }
 
     async def check_order_status(self, order_id: str) -> dict:
         return await self.broker.get_order_status(order_id)
