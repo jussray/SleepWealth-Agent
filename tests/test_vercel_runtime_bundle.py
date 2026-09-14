@@ -9,7 +9,9 @@ from scripts.package_vercel_runtime import (
     RUNTIME_FILES,
     VERCEL_FUNCTION_ENTRYPOINT,
     VERCEL_ROUTE,
+    missing_runtime_imports,
     package_runtime,
+    validate_runtime_import_closure,
     validate_vercel_config,
 )
 
@@ -66,6 +68,40 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "broker/mock.py" in packaged
     assert "broker/crypto_sandbox.py" in packaged
     assert "backend/pump_live_box_server.py" in packaged
+    assert "backend/pump_sandbox_receipts.py" in packaged
+    assert "gate/pump_practice_graduation.py" in packaged
+
+
+def test_runtime_bundle_first_party_import_graph_is_closed():
+    root = Path(__file__).resolve().parents[1]
+
+    assert missing_runtime_imports(root) == []
+    validate_runtime_import_closure(root)
+
+
+def test_runtime_import_closure_rejects_missing_first_party_dependency():
+    root = Path(__file__).resolve().parents[1]
+    incomplete = tuple(
+        path for path in RUNTIME_FILES if path != "backend/pump_sandbox_receipts.py"
+    )
+
+    assert "backend/pump_sandbox_receipts.py" in missing_runtime_imports(root, incomplete)
+    with pytest.raises(RuntimeError, match="pump_sandbox_receipts"):
+        validate_runtime_import_closure(root, incomplete)
+
+
+def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "runtime"
+    package_runtime(root, output, source_sha="b" * 40)
+
+    monkeypatch.syspath_prepend(str(output))
+    for name in list(__import__("sys").modules):
+        if name == "api" or name.startswith("api.") or name == "backend" or name.startswith("backend."):
+            __import__("sys").modules.pop(name, None)
+
+    imported = __import__("api.index", fromlist=["handler"])
+    assert imported.handler is not None
 
 
 def test_vercel_config_pins_the_function_runtime_without_static_build_override():
