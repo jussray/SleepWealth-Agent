@@ -50,10 +50,19 @@ jobs:
           assert manifest["real_money"] is False
           assert "broker/alpaca.py" in manifest["forbidden_runtime_paths"]
           assert "broker/ibkr.py" in manifest["forbidden_runtime_paths"]
+
+          deployment = manifest["deployment_contract"]
+          assert deployment["framework"] == "other"
+          assert deployment["function_entrypoint"] == "api/index.py"
+          assert deployment["build_command"] == "auto"
+          assert deployment["output_directory"] == "auto"
+          assert deployment["route_destination"] == "/api/index?__sw_path=$1"
+
           print(json.dumps({
               "source_sha": manifest["source_sha"],
               "fingerprint": manifest["fingerprint"],
               "authority_ceiling": manifest["authority_ceiling"],
+              "deployment_contract": deployment,
           }, indent=2))
           PY
 
