@@ -17,6 +17,7 @@ def test_live_money_readiness_fails_closed_with_separate_receipts():
         "LIVE_EXECUTION_MODE",
         "REAL_MONEY_EFFECT_CLASS",
         "EXTERNAL_BROKER_ADAPTER",
+        "BROKER_ACCOUNT_ELIGIBILITY",
         "LIVE_BROKER_SESSION_RECEIPT",
     ]
     assert all(check["blocking"] is True for check in checks)
@@ -26,6 +27,7 @@ def test_live_money_readiness_fails_closed_with_separate_receipts():
         "LIVE_EXECUTION_MODE": "BLOCKED",
         "REAL_MONEY_EFFECT_CLASS": "BLOCKED",
         "EXTERNAL_BROKER_ADAPTER": "BLOCKED",
+        "BROKER_ACCOUNT_ELIGIBILITY": "UNKNOWN",
         "LIVE_BROKER_SESSION_RECEIPT": "UNKNOWN",
     }
     assert receipt["blockers"] == codes
@@ -62,5 +64,20 @@ def test_forged_observer_receipt_is_rejected_without_changing_blockers():
         "LIVE_EXECUTION_MODE",
         "REAL_MONEY_EFFECT_CLASS",
         "EXTERNAL_BROKER_ADAPTER",
+        "BROKER_ACCOUNT_ELIGIBILITY",
         "LIVE_BROKER_SESSION_RECEIPT",
     ]
+
+
+def test_broker_eligibility_is_provider_scoped_and_non_authorizing():
+    receipt = live_money_readiness()
+    eligibility = next(
+        check for check in receipt["checks"] if check["code"] == "BROKER_ACCOUNT_ELIGIBILITY"
+    )
+
+    assert eligibility["classification"] == "UNKNOWN"
+    assert eligibility["source"] == "broker-provider-authority"
+    assert "unrelated product" in eligibility["reason"]
+    assert "repository" in eligibility["reason"]
+    assert "platform-account" in eligibility["reason"]
+    assert receipt["execution_authorized"] is False
