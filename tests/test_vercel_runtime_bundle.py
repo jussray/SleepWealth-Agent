@@ -26,6 +26,15 @@ def test_runtime_bundle_is_exact_head_and_non_authorizing(tmp_path):
     assert packaged == set(RUNTIME_FILES)
     assert packaged.isdisjoint(FORBIDDEN_RUNTIME_PATHS)
 
+    required_public = {
+        "public/mom8/index.html",
+        "public/mom8/styles.css",
+        "public/mom8/logo.svg",
+    }
+    assert required_public.issubset(packaged)
+    assert all((output / path).is_file() for path in required_public)
+    assert all((output / path).stat().st_size > 0 for path in required_public)
+
     for row in manifest["files"]:
         path = output / row["path"]
         assert path.is_file()
