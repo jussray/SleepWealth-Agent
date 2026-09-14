@@ -19,7 +19,7 @@ os.environ.setdefault("SLEEPWEALTH_APPROVAL_STATE_SCOPE", "vercel-instance-ephem
 from api.mom8_assets import mom8_asset_response
 from backend.pump_live_box_server import HTML as PUMP_LIVE_BOX_HTML
 from backend.pump_live_box_server import PumpLiveBoxSession
-from backend.server import SleepWealthHandler
+from backend.runtime_server import RuntimeIdentityHandler
 
 
 _PUMP_LIVE_BOX_PREFIX = "/pump-live-box"
@@ -38,7 +38,7 @@ def pump_live_box_relative_path(path: str) -> str | None:
     return None
 
 
-class handler(SleepWealthHandler):
+class handler(RuntimeIdentityHandler):
     """Serve SleepWealth, MOM8 preview, and sandbox-only Pump Live Box on Vercel."""
 
     def _restore_sleepwealth_path(self) -> None:

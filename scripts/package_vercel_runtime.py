@@ -24,6 +24,7 @@ RUNTIME_FILES = (
     "backend/pump_live_box_server.py",
     "backend/pump_sandbox_receipts.py",
     "backend/runtime_identity.py",
+    "backend/runtime_server.py",
     "broker/__init__.py",
     "broker/base.py",
     "broker/factory.py",
