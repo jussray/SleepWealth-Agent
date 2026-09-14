@@ -174,6 +174,13 @@ def evaluate_pump_practice_graduation(
         pnl_total=pnl_total,
         equity=equity,
     )
+    durability_required = final_portfolio.get("practice_state_persistence_required") is True
+    durability_persisted = final_portfolio.get("practice_state_persisted") is True
+    durability_ok = final_portfolio.get("practice_state_persistence_ok") is True
+    durability_transport = str(final_portfolio.get("practice_state_transport") or "none")
+    durability_verified = (not durability_required) or (
+        durability_persisted and durability_ok
+    )
 
     checks = (
         PracticeCheck(
@@ -229,6 +236,21 @@ def evaluate_pump_practice_graduation(
             source="pump-sandbox-pnl",
         ),
         PracticeCheck(
+            code="DURABLE_STATE_PERSISTENCE",
+            classification=(
+                "VERIFIED" if durability_verified else "BLOCKED"
+            ),
+            reason=(
+                f"current simulated outcome is persisted through {durability_transport}"
+                if durability_required and durability_verified
+                else "durable persistence is not configured for this sandbox session"
+                if not durability_required
+                else f"current simulated outcome was not durably accepted by {durability_transport}"
+            ),
+            source="pump-practice-state-store",
+            blocking=durability_required,
+        ),
+        PracticeCheck(
             code="SIMULATED_PNL_SIGNAL",
             classification=(
                 "OBSERVED_POSITIVE"
@@ -256,6 +278,9 @@ def evaluate_pump_practice_graduation(
         "minimum_round_trips": minimum_round_trips,
         "pnl_total": pnl_total if outcome_observed else None,
         "equity": equity if outcome_observed else None,
+        "durable_state_required": durability_required,
+        "durable_state_persisted": durability_persisted,
+        "durable_state_transport": durability_transport,
     }
     fingerprint = _digest(
         {
