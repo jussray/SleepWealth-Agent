@@ -32,6 +32,9 @@ def test_runtime_bundle_is_exact_head_and_non_authorizing(tmp_path):
         "public/mom8/logo.svg",
     }
     assert required_public.issubset(packaged)
+    public_dir = output / "public"
+    assert public_dir.is_dir()
+    assert any(path.is_file() and path.stat().st_size > 0 for path in public_dir.rglob("*"))
     assert all((output / path).is_file() for path in required_public)
     assert all((output / path).stat().st_size > 0 for path in required_public)
 
