@@ -60,6 +60,10 @@ FORBIDDEN_RUNTIME_PATHS = (
     "backend/crypto_sandbox_server.py",
 )
 
+VERCEL_FUNCTION_ENTRYPOINT = "api/index.py"
+VERCEL_ROUTE = {"src": "/(.*)", "dest": "/api/index?__sw_path=$1"}
+FORBIDDEN_VERCEL_CONFIG_KEYS = ("buildCommand", "outputDirectory")
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -80,12 +84,53 @@ def canonical_digest(payload: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def validate_vercel_config(config: dict) -> dict:
+    if "framework" not in config or config["framework"] is not None:
+        raise RuntimeError("Vercel runtime must explicitly use the Other framework preset")
+
+    for key in FORBIDDEN_VERCEL_CONFIG_KEYS:
+        if key in config:
+            raise RuntimeError(
+                f"Vercel runtime must use automatic function build settings; remove {key}"
+            )
+
+    routes = config.get("routes")
+    if not isinstance(routes, list) or VERCEL_ROUTE not in routes:
+        raise RuntimeError("Vercel runtime is missing the canonical api/index.py route")
+
+    return {
+        "framework": "other",
+        "function_entrypoint": VERCEL_FUNCTION_ENTRYPOINT,
+        "build_command": "auto",
+        "output_directory": "auto",
+        "route_destination": VERCEL_ROUTE["dest"],
+    }
+
+
+def vercel_deployment_contract(root: Path) -> dict:
+    config_path = root / "vercel.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Vercel runtime requires a valid vercel.json") from exc
+
+    entrypoint = root / VERCEL_FUNCTION_ENTRYPOINT
+    if not entrypoint.is_file():
+        raise RuntimeError(
+            f"Vercel runtime entrypoint is missing: {VERCEL_FUNCTION_ENTRYPOINT}"
+        )
+
+    return validate_vercel_config(config)
+
+
 def package_runtime(root: Path, output: Path, source_sha: str | None = None) -> dict:
     root = root.resolve()
     output = output.resolve()
     source_sha = (source_sha or git_head_sha(root)).strip().lower()
     if len(source_sha) != 40 or any(ch not in "0123456789abcdef" for ch in source_sha):
         raise ValueError("runtime bundle requires an exact 40-character git SHA")
+
+    deployment_contract = vercel_deployment_contract(root)
 
     allowed = set(RUNTIME_FILES)
     forbidden = set(FORBIDDEN_RUNTIME_PATHS)
@@ -120,6 +165,7 @@ def package_runtime(root: Path, output: Path, source_sha: str | None = None) -> 
         "schema": "sleepwealth-vercel-runtime-bundle-v1",
         "source_sha": source_sha,
         "files": sorted(entries, key=lambda row: str(row["path"])),
+        "deployment_contract": deployment_contract,
         "authority_ceiling": "paper/sandbox simulation only; read-only public market observation",
         "live_execution": False,
         "real_money": False,
