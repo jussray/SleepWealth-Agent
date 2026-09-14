@@ -74,6 +74,8 @@ def main():
             assert page.locator("#graduation").inner_text() == "PRACTICE_REQUIRED"
             initial_graduation = page.request.get(BASE_URL.rstrip("/") + "/api/graduation").json()
             assert initial_graduation["review_ready"] is False
+            assert initial_graduation["live_review_ready"] is False
+            assert initial_graduation["platform_eligibility_verified"] is False
             assert initial_graduation["execution_authorized"] is False
             assert initial_graduation["money_movement_capability"] is False
             proof["checks"].append("practice_gate_starts_fail_closed")
@@ -167,13 +169,18 @@ def main():
             assert wallet_after_sell["pnl_total"] == 2.5
             page.evaluate("wallet()")
             page.wait_for_function("() => document.querySelector('#pnl').textContent === '+$2.50'")
-            page.wait_for_function("() => document.querySelector('#graduation').textContent === 'READY_FOR_ADULT_LIVE_REVIEW'")
+            page.wait_for_function("() => document.querySelector('#graduation').textContent === 'READY_FOR_ELIGIBILITY_REVIEW'")
             assert page.locator("#cash").inner_text() == "$102.50"
             assert page.locator("#equity").inner_text() == "$102.50"
             assert page.locator("#practice-samples").inner_text() == "2 / 2"
             graduation = page.request.get(BASE_URL.rstrip("/") + "/api/graduation").json()
-            assert graduation["classification"] == "READY_FOR_ADULT_LIVE_REVIEW"
+            assert graduation["classification"] == "READY_FOR_ELIGIBILITY_REVIEW"
             assert graduation["review_ready"] is True
+            assert graduation["practice_evidence_complete"] is True
+            assert graduation["live_review_ready"] is False
+            assert graduation["platform_eligibility_verified"] is False
+            assert graduation["eligibility_review_required"] is True
+            assert graduation["eligibility"]["classification"] == "UNVERIFIED"
             assert graduation["metrics"]["completed_round_trips"] == 1
             assert graduation["metrics"]["pnl_total"] == 2.5
             assert graduation["execution_authorized"] is False
@@ -182,7 +189,7 @@ def main():
             assert graduation["real_money"] is False
             assert graduation["live_execution"] is False
             assert graduation["authority"] == "none"
-            proof["checks"].append("practice_evidence_graduates_to_review_only")
+            proof["checks"].append("practice_evidence_reaches_eligibility_review_only")
             proof["graduation_fingerprint"] = graduation["fingerprint"]
             proof["checks"].append("sandbox_round_trip_pnl_receipted")
             proof["sell_receipt_fingerprint"] = sold["receipt"]["receipt_fingerprint"]
@@ -203,7 +210,7 @@ def main():
             assert mobile.goto(BASE_URL, wait_until="networkidle").ok
             assert mobile.get_by_text("PUMP LIVE BOX").is_visible()
             assert mobile.locator("#pnl").inner_text() == "+$2.50"
-            mobile.wait_for_function("() => document.querySelector('#graduation').textContent === 'READY_FOR_ADULT_LIVE_REVIEW'")
+            mobile.wait_for_function("() => document.querySelector('#graduation').textContent === 'READY_FOR_ELIGIBILITY_REVIEW'")
             overflow = mobile.evaluate("() => document.documentElement.scrollWidth > document.documentElement.clientWidth")
             assert overflow is False
             mobile.screenshot(path=str(ARTIFACT_DIR / "pump-live-box-mobile.png"), full_page=True)
