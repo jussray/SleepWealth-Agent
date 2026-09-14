@@ -166,6 +166,21 @@ class PumpLiveBoxSession:
                 }
             if request.evaluation.get("evidence_authority") != "none" or not request.evaluation.get("evidence_read_only"):
                 raise RuntimeError("Pump evidence authority boundary changed")
+            market = await self.broker.get_market_data(request.order.symbol)
+            current_price = float(market["price"])
+            bound_price = float(request.evaluation["price"])
+            if current_price != bound_price:
+                return {
+                    "status": "blocked",
+                    "reason": "sandbox market price changed since proposal; bind current evidence into a new proposal",
+                    "proposal_id": request.proposal_id,
+                    "bound_price": bound_price,
+                    "current_price": current_price,
+                    "stale_evidence": True,
+                    "authority": "none",
+                    "real_money": False,
+                    "live_execution": False,
+                }
             if not self.queue.approve(request.proposal_id, "explicit Pump Live Box sandbox approval"):
                 raise RuntimeError("approval could not be recorded")
             if not self.queue.approval_is_intact(request.proposal_id):
