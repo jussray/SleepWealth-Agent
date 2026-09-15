@@ -17,6 +17,7 @@ os.environ.setdefault(
 os.environ.setdefault("SLEEPWEALTH_APPROVAL_STATE_SCOPE", "vercel-instance-ephemeral")
 
 from api.mom8_assets import mom8_asset_response
+from backend.practice_state_store import practice_state_identity
 from backend.pump_live_box_server import HTML as PUMP_LIVE_BOX_HTML
 from backend.pump_live_box_server import PumpLiveBoxSession
 from backend.runtime_identity import runtime_identity
@@ -41,6 +42,7 @@ def pump_live_box_relative_path(path: str) -> str | None:
 
 def pump_live_box_health_payload() -> dict[str, object]:
     """Expose non-authorizing deployed identity and money-boundary evidence."""
+    state_store = _PUMP_LIVE_BOX_SESSION.receipts.state_store
     return {
         "status": "ok",
         "pump_network_access": "none",
@@ -49,6 +51,8 @@ def pump_live_box_health_payload() -> dict[str, object]:
         "real_money": False,
         "live_execution": False,
         "state_scope": os.environ["SLEEPWEALTH_APPROVAL_STATE_SCOPE"],
+        "practice_state_transport": state_store.kind if state_store is not None else "none",
+        "durable_state_required": state_store is not None,
         "runtime_identity": runtime_identity(),
         "money_boundary": _PUMP_LIVE_BOX_SESSION.boundary(),
     }
@@ -103,7 +107,18 @@ class handler(RuntimeIdentityHandler):
         if relative_path == "/health":
             return self._send_json(pump_live_box_health_payload())
         if relative_path == "/api/wallet":
-            return self._send_json(asyncio.run(_PUMP_LIVE_BOX_SESSION.wallet()))
+            try:
+                return self._send_json(asyncio.run(_PUMP_LIVE_BOX_SESSION.wallet()))
+            except (RuntimeError, PermissionError, ValueError) as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "reason": str(exc),
+                        "real_money": False,
+                        "live_execution": False,
+                    },
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
         if relative_path == "/api/money-boundary":
             return self._send_json(_PUMP_LIVE_BOX_SESSION.boundary())
         return self._send_json(
@@ -166,7 +181,8 @@ class handler(RuntimeIdentityHandler):
         parsed = urlparse(self.path)
         pump_path = pump_live_box_relative_path(parsed.path)
         if pump_path is not None:
-            return self._serve_pump_get(pump_path)
+            with practice_state_identity(self.headers.get("x-vercel-oidc-token")):
+                return self._serve_pump_get(pump_path)
         asset = mom8_asset_response(parsed.path)
         if asset is not None:
             content_type, body = asset
@@ -178,5 +194,6 @@ class handler(RuntimeIdentityHandler):
         parsed = urlparse(self.path)
         pump_path = pump_live_box_relative_path(parsed.path)
         if pump_path is not None:
-            return self._serve_pump_post(pump_path)
+            with practice_state_identity(self.headers.get("x-vercel-oidc-token")):
+                return self._serve_pump_post(pump_path)
         return super().do_POST()
