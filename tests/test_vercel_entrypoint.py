@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 
 from backend.pump_live_box_server import PumpLiveBoxSession
 from backend.runtime_server import RuntimeIdentityHandler
@@ -21,6 +22,39 @@ def test_vercel_entrypoint_uses_runtime_identity_paper_handler(monkeypatch):
         os.environ["SLEEPWEALTH_APPROVAL_STATE_SCOPE"]
         == "vercel-instance-ephemeral"
     )
+
+
+def test_pump_vercel_handler_binds_request_oidc_without_exposing_it(monkeypatch):
+    from api import index
+
+    seen = []
+
+    @contextmanager
+    def fake_identity(token):
+        seen.append(("token", token))
+        yield
+
+    monkeypatch.setattr(index, "practice_state_identity", fake_identity)
+
+    class FakeHandler:
+        path = "/pump-live-box/api/money-boundary"
+        headers = {"x-vercel-oidc-token": "request-oidc-token"}
+
+        def _restore_sleepwealth_path(self):
+            return None
+
+        def _serve_pump_get(self, relative_path):
+            seen.append(("path", relative_path))
+            return "served"
+
+    result = index.handler.do_GET(FakeHandler())
+
+    assert result == "served"
+    assert seen == [
+        ("token", "request-oidc-token"),
+        ("path", "/api/money-boundary"),
+    ]
+    assert "request-oidc-token" not in str(index.pump_live_box_health_payload())
 
 
 def test_pump_live_box_is_namespaced_on_vercel_without_widening_main_api():
