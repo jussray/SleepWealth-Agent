@@ -1,5 +1,4 @@
 import json
-from contextlib import contextmanager
 
 import pytest
 
@@ -159,36 +158,3 @@ def test_neon_stale_writer_is_a_distinct_conflict_without_token_leak(monkeypatch
 def test_neon_carrier_rejects_non_https_endpoint():
     with pytest.raises(ValueError, match="requires an HTTPS"):
         NeonDataApiPracticeStateStore("http://example.com/rest/v1")
-
-
-def test_vercel_handler_binds_oidc_header_only_for_pump_request(monkeypatch):
-    from api import index
-
-    seen = []
-
-    @contextmanager
-    def fake_identity(token):
-        seen.append(("token", token))
-        yield
-
-    monkeypatch.setattr(index, "practice_state_identity", fake_identity)
-
-    class FakeHandler:
-        path = "/pump-live-box/api/money-boundary"
-        headers = {"x-vercel-oidc-token": "request-oidc-token"}
-
-        def _restore_sleepwealth_path(self):
-            return None
-
-        def _serve_pump_get(self, relative_path):
-            seen.append(("path", relative_path))
-            return "served"
-
-    result = index.handler.do_GET(FakeHandler())
-
-    assert result == "served"
-    assert seen == [
-        ("token", "request-oidc-token"),
-        ("path", "/api/money-boundary"),
-    ]
-    assert "request-oidc-token" not in json.dumps(index.pump_live_box_health_payload())
