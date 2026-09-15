@@ -33,8 +33,34 @@ def test_pump_live_box_is_namespaced_on_vercel_without_widening_main_api():
         index.pump_live_box_relative_path("/pump-live-box/api/wallet")
         == "/api/wallet"
     )
+    assert (
+        index.pump_live_box_relative_path("/pump-live-box/api/money-boundary")
+        == "/api/money-boundary"
+    )
     assert index.pump_live_box_relative_path("/api/wallet") is None
+    assert index.pump_live_box_relative_path("/api/money-boundary") is None
     assert index.pump_live_box_relative_path("/pump-live-boxer") is None
+
+
+def test_pump_live_box_vercel_health_binds_runtime_and_money_boundary(monkeypatch):
+    from api import index
+
+    source_sha = "a" * 40
+    monkeypatch.setenv("SLEEPWEALTH_RUNTIME_SHA", source_sha)
+    payload = index.pump_live_box_health_payload()
+
+    assert payload["status"] == "ok"
+    assert payload["authority"] == "sandbox-simulation-only"
+    assert payload["real_money"] is False
+    assert payload["live_execution"] is False
+    assert payload["runtime_identity"]["source_sha"] == source_sha
+    assert payload["runtime_identity"]["source_provider"] == "sleepwealth-runtime"
+    assert payload["runtime_identity"]["exact_source_known"] is True
+    assert payload["runtime_identity"]["execution_authorized"] is False
+    assert payload["money_boundary"]["classification"] == "BLOCKED"
+    assert payload["money_boundary"]["execution_authorized"] is False
+    assert payload["money_boundary"]["real_money"] is False
+    assert payload["money_boundary"]["live_execution"] is False
 
 
 def test_pump_live_box_browser_calls_stay_inside_the_namespaced_surface():
