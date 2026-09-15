@@ -27,7 +27,7 @@ HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 10% 10%,#12353c,transparent 35%),var(--bg);color:var(--i);padding:20px;display:grid;place-items:center}
 main{width:min(900px,100%);background:var(--p);border:1px solid var(--l);border-radius:8px 26px;padding:26px;box-shadow:-12px 12px 0 #102b30}
 .badges{display:flex;gap:7px;flex-wrap:wrap}.b{border:1px solid var(--l);border-radius:999px;padding:7px 10px;color:var(--c);font:800 .72rem ui-monospace}.warn{color:var(--w)}
-h1{font-size:clamp(2.6rem,8vw,5rem);line-height:.9;letter-spacing:-.055em;margin:20px 0 10px}p{color:var(--m);line-height:1.5}
+h1{font-size:clamp(2.6rem,8vw,5rem);line-height:.9;letter-spacing:-.055em;margin:20px 0 10px}p{color:var(--m);line-height:1.5}.identity{border-left:4px solid var(--v);padding:10px 12px;background:#171323;color:var(--i)}
 .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}.box{border:1px solid var(--l);padding:16px;border-radius:16px 5px;background:#091218}
 form{display:grid;grid-template-columns:1fr 1fr;gap:9px}label{display:grid;gap:5px;color:var(--m);font-size:.72rem;text-transform:uppercase}.wide{grid-column:1/-1}
 input,select,button{font:inherit;border:1px solid var(--l);background:#071014;color:var(--i);padding:10px;border-radius:9px 4px}button{background:var(--c);color:#061014;font-weight:900}.approve{background:var(--v)}button:disabled{opacity:.4}.actions{display:flex;gap:9px;margin-top:10px}.actions button{flex:1}
@@ -38,11 +38,12 @@ input,select,button{font:inherit;border:1px solid var(--l);background:#071014;co
 <div class="badges"><span class="b">PUMP LIVE BOX</span><span class="b">PUBLIC EVIDENCE · READ-ONLY</span><span class="b warn">SIMULATED EXECUTION ONLY</span></div>
 <h1>Evidence in. Authority stays out.</h1>
 <p>Bind one current public Pump.fun observation to an exact sandbox proposal. Changing the evidence changes the proposal fingerprint.</p>
+<p class="identity"><strong>MOM8</strong> is the founder-owned token identity. External contracts are observation targets only and never replace MOM8.</p>
 <div class="grid"><section class="box"><form>
-<label class="wide">Pump source URL<input id="source-url" value="https://pump.fun/coin/MOM8"></label>
-<label>Symbol<input id="symbol" value="MOM8"></label>
-<label>Mint<input id="mint" value="MOM8-DEMO-MINT"></label>
-<label>Observed price<input id="price" value="0.50"></label>
+<label class="wide">Pump source URL<input id="source-url" placeholder="https://pump.fun/coin/EXACT_TOKEN"></label>
+<label>Symbol<input id="symbol" placeholder="Token symbol"></label>
+<label>Mint<input id="mint" placeholder="Exact mint address"></label>
+<label>Observed price<input id="price" placeholder="Current observed price"></label>
 <label>Quantity<input id="qty" value="10"></label>
 <label>Side<select id="side"><option>buy</option><option>sell</option></select></label>
 <label>Observed at<input id="observed-at"></label>
@@ -64,6 +65,12 @@ input,select,button{font:inherit;border:1px solid var(--l);background:#071014;co
 <script>
 const R=document.getElementById('result'),A=document.getElementById('approve');let id=null;
 document.getElementById('observed-at').value=new Date().toISOString();
+if(['127.0.0.1','localhost'].includes(location.hostname)){
+  document.getElementById('source-url').value='https://pump.fun/coin/TEST-OBSERVATION';
+  document.getElementById('symbol').value='TEST';
+  document.getElementById('mint').value='TEST-DEMO-MINT';
+  document.getElementById('price').value='0.50';
+}
 async function wallet(){const r=await fetch('/api/wallet'),d=await r.json();document.getElementById('cash').textContent='$'+Number(d.cash).toFixed(2);document.getElementById('equity').textContent='$'+Number(d.equity).toFixed(2);document.getElementById('pnl').textContent=(Number(d.pnl_total)>=0?'+':'')+'$'+Number(d.pnl_total).toFixed(2);const gr=await fetch('/api/graduation'),g=await gr.json();document.getElementById('graduation').textContent=g.classification;document.getElementById('practice-samples').textContent=g.metrics.execution_count+' / '+g.metrics.minimum_executions}
 document.getElementById('bind').onclick=async()=>{id=null;A.disabled=true;const evidence={source_url:document.getElementById('source-url').value,symbol:document.getElementById('symbol').value,mint:document.getElementById('mint').value,price:Number(document.getElementById('price').value),observed_at:document.getElementById('observed-at').value};const r=await fetch('/api/proposals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({evidence,qty:Number(document.getElementById('qty').value),side:document.getElementById('side').value})}),d=await r.json();R.textContent=JSON.stringify(d,null,2);if(d.status==='pending'){id=d.proposal_id;A.disabled=false;document.getElementById('authority').textContent=d.evidence.authority;document.getElementById('efp').textContent=d.evidence.fingerprint.slice(0,14)+'…';document.getElementById('pfp').textContent=d.proposal_fingerprint.slice(0,14)+'…'}};
 A.onclick=async()=>{if(!id)return;A.disabled=true;const r=await fetch('/api/proposals/'+encodeURIComponent(id)+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}),d=await r.json();R.textContent=JSON.stringify(d,null,2);if(d.receipt&&d.receipt.receipt_fingerprint){document.getElementById('receipt').textContent=d.receipt.receipt_fingerprint.slice(0,14)+'…'}await wallet()};
