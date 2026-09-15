@@ -4,6 +4,8 @@ import os
 import re
 from collections.abc import Mapping
 
+from backend import runtime_bundle_identity
+
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
@@ -25,6 +27,12 @@ def runtime_identity(env: Mapping[str, str] | None = None) -> dict[str, object]:
             provider = candidate_provider
             source_sha = normalized.lower()
             break
+
+    if source_sha is None:
+        bundled = str(runtime_bundle_identity.SOURCE_SHA or "").strip().lower()
+        if bundled:
+            provider = runtime_bundle_identity.SOURCE_PROVIDER
+            source_sha = bundled
 
     exact_source_known = bool(source_sha and _SHA_RE.fullmatch(source_sha))
     if not exact_source_known:
