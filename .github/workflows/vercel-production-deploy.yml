@@ -1,0 +1,206 @@
+name: vercel production deploy
+
+on:
+  workflow_run:
+    workflows: ["vercel runtime bundle"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  VERCEL_ORG_ID: team_sf52tzvdJRIApjPJAq3kOc09
+  VERCEL_PROJECT_ID: prj_caSYNLgnJINUvSHtvWDXSGfrFRc4
+  VERCEL_PROJECT_NAME: sleepwealth-paper-lab
+  VERCEL_TEAM_SLUG: raylene-s-projects
+
+jobs:
+  deploy-production:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Bind production deploy to exact bundled head
+        shell: bash
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"
+          echo "exact_production_deploy_sha=$checked_out_sha"
+
+      - name: Download exact-head Vercel runtime bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: sleepwealth-vercel-runtime-${{ github.event.workflow_run.head_sha }}
+          path: artifacts/vercel-runtime
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Validate exact bundle and authority ceiling
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("artifacts/vercel-runtime")
+          manifest = json.loads((root / "runtime-bundle.json").read_text(encoding="utf-8"))
+          assert manifest["source_sha"] == os.environ["EXPECTED_HEAD_SHA"]
+          assert manifest["live_execution"] is False
+          assert manifest["real_money"] is False
+          assert "broker/alpaca.py" in manifest["forbidden_runtime_paths"]
+          assert "broker/ibkr.py" in manifest["forbidden_runtime_paths"]
+
+          identity = (root / "backend/runtime_bundle_identity.py").read_text(encoding="utf-8")
+          assert os.environ["EXPECTED_HEAD_SHA"] in identity
+          assert 'SOURCE_PROVIDER = "vercel-bundle"' in identity
+          PY
+
+      - name: Prepare production deployment receipt
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = {
+              "schema": "sleepwealth-vercel-production-deploy-v1",
+              "expected_source_sha": os.environ["EXPECTED_HEAD_SHA"],
+              "project_id": os.environ["VERCEL_PROJECT_ID"],
+              "project_name": os.environ["VERCEL_PROJECT_NAME"],
+              "team_id": os.environ["VERCEL_ORG_ID"],
+              "team_slug": os.environ["VERCEL_TEAM_SLUG"],
+              "classification": "UNKNOWN",
+              "code": "VERCEL_DEPLOY_NOT_ATTEMPTED",
+              "provider_accepted": False,
+              "outcome_verified": False,
+              "execution_authorized": False,
+              "real_money": False,
+              "live_execution": False,
+              "truth": "Deployment authority is limited to the canonical paper/sandbox runtime artifact and cannot grant trading or money-moving authority.",
+          }
+          Path("artifacts/vercel-production-deploy.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Require Vercel deployment credential
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/vercel-production-deploy.json")
+          receipt = json.loads(path.read_text(encoding="utf-8"))
+          receipt.update({
+              "classification": "BLOCKED",
+              "code": "VERCEL_TOKEN_MISSING",
+              "reason": "Repository secret VERCEL_TOKEN is unavailable; production deployment was not attempted.",
+          })
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+            exit 1
+          fi
+
+      - name: Deploy exact artifact to canonical Paper Lab production
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        shell: bash
+        run: |
+          set -u
+          set +e
+          deploy_output="$({
+            npx --yes vercel@59.11.7 deploy artifacts/vercel-runtime \
+              --prod \
+              --yes \
+              --token "$VERCEL_TOKEN" \
+              --scope "$VERCEL_TEAM_SLUG" \
+              --project "$VERCEL_PROJECT_ID"
+          } 2>&1)"
+          deploy_status=$?
+          set -e
+
+          if [ "$deploy_status" -ne 0 ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/vercel-production-deploy.json")
+          receipt = json.loads(path.read_text(encoding="utf-8"))
+          receipt.update({
+              "classification": "BLOCKED",
+              "code": "VERCEL_DEPLOY_COMMAND_FAILED",
+              "reason": "Vercel CLI returned a non-zero status. No deployment outcome is claimed.",
+          })
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+            printf '%s\n' "$deploy_output"
+            exit "$deploy_status"
+          fi
+
+          deployment_url="$(printf '%s\n' "$deploy_output" | grep -Eo 'https://[^[:space:]]+\.vercel\.app' | tail -n 1 || true)"
+          if [ -z "$deployment_url" ]; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/vercel-production-deploy.json")
+          receipt = json.loads(path.read_text(encoding="utf-8"))
+          receipt.update({
+              "classification": "BLOCKED",
+              "code": "VERCEL_DEPLOY_URL_UNPROVED",
+              "reason": "Vercel CLI succeeded but no deployment URL was parsed; provider acceptance remains unproved.",
+          })
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+            printf '%s\n' "$deploy_output"
+            exit 1
+          fi
+
+          DEPLOYMENT_URL="$deployment_url" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("artifacts/vercel-production-deploy.json")
+          receipt = json.loads(path.read_text(encoding="utf-8"))
+          receipt.update({
+              "classification": "VERIFIED",
+              "code": "VERCEL_PROVIDER_ACCEPTED",
+              "provider_accepted": True,
+              "outcome_verified": False,
+              "deployment_url": os.environ["DEPLOYMENT_URL"],
+              "reason": "Vercel CLI accepted the exact-head artifact for the canonical production project; public runtime outcome remains a separate gate.",
+          })
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          printf '%s\n' "$deploy_output"
+
+      - name: Upload production deployment receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sleepwealth-vercel-production-deploy-${{ github.event.workflow_run.head_sha }}
+          path: artifacts/vercel-production-deploy.json
+          if-no-files-found: error

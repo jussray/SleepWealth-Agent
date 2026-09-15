@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pytest
 
 from scripts.package_vercel_runtime import (
     FORBIDDEN_RUNTIME_PATHS,
+    RUNTIME_BUNDLE_IDENTITY_FILE,
     RUNTIME_FILES,
     VERCEL_FUNCTION_ENTRYPOINT,
     VERCEL_ROUTE,
@@ -41,6 +43,14 @@ def test_runtime_bundle_is_exact_head_and_non_authorizing(tmp_path):
     assert packaged == set(RUNTIME_FILES)
     assert packaged.isdisjoint(FORBIDDEN_RUNTIME_PATHS)
 
+    identity_path = output / RUNTIME_BUNDLE_IDENTITY_FILE
+    spec = importlib.util.spec_from_file_location("packaged_runtime_bundle_identity", identity_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.SOURCE_SHA == source_sha
+    assert module.SOURCE_PROVIDER == "vercel-bundle"
+
     required_public = {
         "public/mom8/index.html",
         "public/mom8/styles.css",
@@ -58,6 +68,13 @@ def test_runtime_bundle_is_exact_head_and_non_authorizing(tmp_path):
         assert path.is_file()
         assert hashlib.sha256(path.read_bytes()).hexdigest() == row["sha256"]
         assert path.stat().st_size == row["size"]
+
+
+def test_source_checkout_bundle_identity_is_non_authorizing_placeholder():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / RUNTIME_BUNDLE_IDENTITY_FILE).read_text(encoding="utf-8")
+    assert "SOURCE_SHA: str | None = None" in source
+    assert 'SOURCE_PROVIDER = "vercel-bundle"' in source
 
 
 def test_runtime_bundle_excludes_live_broker_and_server_paths():
@@ -93,7 +110,8 @@ def test_runtime_import_closure_rejects_missing_first_party_dependency():
 def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     output = tmp_path / "runtime"
-    package_runtime(root, output, source_sha="b" * 40)
+    source_sha = "b" * 40
+    package_runtime(root, output, source_sha=source_sha)
 
     monkeypatch.syspath_prepend(str(output))
     for name in list(__import__("sys").modules):
@@ -102,6 +120,11 @@ def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
 
     imported = __import__("api.index", fromlist=["handler"])
     assert imported.handler is not None
+    identity = __import__("backend.runtime_identity", fromlist=["runtime_identity"])
+    receipt = identity.runtime_identity({})
+    assert receipt["source_sha"] == source_sha
+    assert receipt["source_provider"] == "vercel-bundle"
+    assert receipt["execution_authorized"] is False
 
 
 def test_vercel_config_pins_the_function_runtime_without_static_build_override():

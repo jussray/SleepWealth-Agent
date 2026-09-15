@@ -1,3 +1,4 @@
+from backend import runtime_bundle_identity
 from backend.runtime_identity import runtime_identity
 from backend.runtime_server import health_payload
 
@@ -31,6 +32,33 @@ def test_explicit_runtime_sha_supports_ci_without_render():
     assert receipt["source_sha"] == SHA_B
     assert receipt["source_provider"] == "sleepwealth-runtime"
     assert receipt["exact_source_known"] is True
+    assert receipt["execution_authorized"] is False
+
+
+def test_packaged_vercel_bundle_proves_identity_without_env(monkeypatch):
+    monkeypatch.setattr(runtime_bundle_identity, "SOURCE_SHA", SHA_C)
+    receipt = runtime_identity({})
+    assert receipt["source_sha"] == SHA_C
+    assert receipt["source_provider"] == "vercel-bundle"
+    assert receipt["exact_source_known"] is True
+    assert receipt["execution_authorized"] is False
+
+
+def test_invalid_packaged_identity_fails_closed(monkeypatch):
+    monkeypatch.setattr(runtime_bundle_identity, "SOURCE_SHA", "not-a-commit")
+    receipt = runtime_identity({})
+    assert receipt["source_sha"] is None
+    assert receipt["source_provider"] == "unknown"
+    assert receipt["exact_source_known"] is False
+    assert receipt["execution_authorized"] is False
+
+
+def test_invalid_higher_priority_runtime_sha_does_not_fall_through(monkeypatch):
+    monkeypatch.setattr(runtime_bundle_identity, "SOURCE_SHA", SHA_C)
+    receipt = runtime_identity({"RENDER_GIT_COMMIT": "not-a-commit"})
+    assert receipt["source_sha"] is None
+    assert receipt["source_provider"] == "unknown"
+    assert receipt["exact_source_known"] is False
     assert receipt["execution_authorized"] is False
 
 
