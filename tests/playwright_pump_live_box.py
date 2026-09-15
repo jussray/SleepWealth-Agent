@@ -55,9 +55,9 @@ def stop_server(server):
 
 def pump_evidence(price):
     return {
-        "source_url": "https://pump.fun/coin/MOM8",
-        "symbol": "MOM8",
-        "mint": "MOM8-DEMO-MINT",
+        "source_url": "https://pump.fun/coin/TEST-OBSERVATION",
+        "symbol": "TEST",
+        "mint": "TEST-DEMO-MINT",
         "price": price,
         "observed_at": "2026-09-13T23:05:00Z",
     }
@@ -85,6 +85,12 @@ def main():
             assert page.get_by_role("heading", name="Evidence in. Authority stays out.").is_visible()
             assert page.get_by_text("PUBLIC EVIDENCE · READ-ONLY").is_visible()
             assert page.get_by_text("SIMULATED EXECUTION ONLY").is_visible()
+            identity_text = page.locator(".identity").inner_text()
+            assert "MOM8" in identity_text
+            assert "External contracts are observation targets only" in identity_text
+            assert page.locator("#symbol").input_value() == "TEST"
+            assert page.locator("#mint").input_value() == "TEST-DEMO-MINT"
+            proof["checks"].append("mom8_identity_separate_from_local_test_fixture")
             assert page.locator("#cash").inner_text() == "$100.00"
             assert page.locator("#equity").inner_text() == "$100.00"
             assert page.locator("#pnl").inner_text() == "+$0.00"
