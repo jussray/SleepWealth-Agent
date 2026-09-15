@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -18,6 +19,10 @@ except ImportError:  # pragma: no cover - persistent mode fails closed below
 
 
 STATE_VERSION = 1
+STATE_SEAL_ALGORITHM = "sha256"
+_RUNTIME_DEFAULT = object()
+_PROCESS_NONCE = uuid.uuid4().hex
+_DEFAULT_RUNTIME_STATE_PATH = ".sleepwealth/paper-approvals.json"
 
 
 class ApprovalStatus(str, Enum):
@@ -44,6 +49,16 @@ def approval_fingerprint(order: Order, evaluation: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def runtime_approval_state_path() -> str:
+    configured = os.getenv("SLEEPWEALTH_APPROVAL_STATE", "").strip()
+    return configured or _DEFAULT_RUNTIME_STATE_PATH
+
+
+def runtime_process_session_id() -> str:
+    """Return a non-secret session marker that changes across execs and forks."""
+    return f"{os.getpid()}:{_PROCESS_NONCE}"
+
+
 def _parse_datetime(value: object) -> Optional[datetime]:
     if not isinstance(value, str) or not value:
         return None
@@ -53,6 +68,15 @@ def _parse_datetime(value: object) -> Optional[datetime]:
 
 def _json_copy(value):
     return json.loads(json.dumps(value, default=str))
+
+
+def _canonical_state_payload(payload: dict) -> bytes:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return canonical.encode("utf-8")
+
+
+def _state_seal(payload: dict) -> str:
+    return hashlib.sha256(_canonical_state_payload(payload)).hexdigest()
 
 
 @dataclass
@@ -75,16 +99,23 @@ class ApprovalRequest:
 class ApprovalQueue:
     """Human-in-the-loop gate for simulated actions.
 
-    When state_path is set, proposal state is atomically persisted. Approval and
-    in-flight execution are session-bound so restarts fail closed instead of
-    replaying unfinished work.
+    Omitted state_path uses Sleep Wealth's file-backed runtime default. Pass
+    state_path=None explicitly only for isolated in-memory tests or library use.
+    File-backed approval state is atomically persisted and self-sealed. Approval and
+    in-flight execution are session-bound so process restarts, execs, and pre-fork
+    worker boundaries fail closed instead of replaying unfinished work. Queue
+    instances inside one OS process share the same session marker. The SHA-256 seal
+    detects accidental corruption or unsophisticated local edits; it is not an
+    authentication secret and does not make local storage tamper-proof.
     """
 
-    def __init__(self, state_path: str | None = None, session_id: str | None = None):
+    def __init__(self, state_path=_RUNTIME_DEFAULT, session_id: str | None = None):
         self.queue: List[ApprovalRequest] = []
         self._counter = 0
-        self.state_path = Path(state_path) if state_path else None
-        self.session_id = session_id or uuid.uuid4().hex
+        if state_path is _RUNTIME_DEFAULT:
+            state_path = runtime_approval_state_path()
+        self.state_path = Path(state_path) if state_path is not None else None
+        self.session_id = session_id or runtime_process_session_id()
 
         if self.state_path is not None:
             if fcntl is None:
@@ -166,10 +197,24 @@ class ApprovalQueue:
             self._counter = 0
             return
         try:
-            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            stored = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"approval state is unreadable: {exc}") from exc
-        if not isinstance(payload, dict) or payload.get("version") != STATE_VERSION:
+        if not isinstance(stored, dict):
+            raise RuntimeError("approval state shape is invalid")
+        seal = stored.get("seal")
+        if not isinstance(seal, dict):
+            raise RuntimeError("approval state seal is missing")
+        if seal.get("algorithm") != STATE_SEAL_ALGORITHM:
+            raise RuntimeError("approval state seal algorithm is missing or unsupported")
+        expected = seal.get("digest")
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise RuntimeError("approval state seal digest is invalid")
+        payload = {key: value for key, value in stored.items() if key != "seal"}
+        actual = _state_seal(payload)
+        if not hmac.compare_digest(expected, actual):
+            raise RuntimeError("approval state integrity check failed")
+        if payload.get("version") != STATE_VERSION:
             raise RuntimeError("approval state version is missing or unsupported")
         requests = payload.get("requests")
         counter = payload.get("counter")
@@ -191,7 +236,16 @@ class ApprovalQueue:
             "counter": self._counter,
             "requests": [self._serialize_request(request) for request in self.queue],
         }
-        encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        stored = {
+            **payload,
+            "seal": {
+                "algorithm": STATE_SEAL_ALGORITHM,
+                "digest": _state_seal(payload),
+            },
+        }
+        encoded = (
+            json.dumps(stored, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
         temp_path = self.state_path.with_name(
             f".{self.state_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         )
@@ -234,7 +288,10 @@ class ApprovalQueue:
             self._load_locked()
 
     def _find(self, proposal_id: str) -> Optional[ApprovalRequest]:
-        return next((request for request in self.queue if request.proposal_id == proposal_id), None)
+        return next(
+            (request for request in self.queue if request.proposal_id == proposal_id),
+            None,
+        )
 
     def add(self, order: Order, evaluation: dict) -> str:
         with self._locked_state():
@@ -253,7 +310,11 @@ class ApprovalQueue:
     def get_pending(self) -> List[ApprovalRequest]:
         with self._locked_state():
             self._refresh_locked()
-            return [request for request in self.queue if request.status is ApprovalStatus.PENDING]
+            return [
+                request
+                for request in self.queue
+                if request.status is ApprovalStatus.PENDING
+            ]
 
     def approve(self, proposal_id: str, reason: str | None = None) -> bool:
         with self._locked_state():
@@ -263,7 +324,9 @@ class ApprovalQueue:
                 return False
             request.status = ApprovalStatus.APPROVED
             request.approved_at = datetime.now(timezone.utc)
-            request.approved_fingerprint = approval_fingerprint(request.order, request.evaluation)
+            request.approved_fingerprint = approval_fingerprint(
+                request.order, request.evaluation
+            )
             request.approval_session_id = self.session_id
             request.reason = reason
             self._persist_locked()

@@ -46,5 +46,25 @@ async def test_zero_qty_rejected():
     assert result["status"] == "rejected"
 
 
+@pytest.mark.asyncio
+async def test_cancel_all_marks_only_working_orders_cancelled_and_preserves_evidence():
+    broker = MockBroker()
+    await broker.connect()
+    broker.orders = {
+        "MOCK-WORKING": {"status": "Submitted"},
+        "MOCK-FILLED": {"status": "filled", "filled_price": 100.0},
+    }
+
+    assert await broker.cancel_all() is True
+
+    working = await broker.get_order_status("MOCK-WORKING")
+    filled = await broker.get_order_status("MOCK-FILLED")
+    assert working["status"] == "Cancelled"
+    assert working["cancelled_at"] is not None
+    assert filled["status"] == "filled"
+    assert filled["filled_price"] == 100.0
+    assert await broker.cancel_all() is False
+
+
 def test_mock_is_paper_only():
     assert MockBroker().is_paper_only() is True

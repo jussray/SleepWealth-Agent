@@ -26,7 +26,7 @@ async def _build(tmp_path, cash=10_000, broker=None, rules=None):
     broker = broker or MockBroker(initial_cash=cash)
     await broker.connect()
     portfolio = PortfolioTracker(broker, min_cash_floor=active_rules["floor_cash"])
-    queue = ApprovalQueue()
+    queue = ApprovalQueue(state_path=None)
     audit = AuditLogger(log_path=str(tmp_path / "audit.log"))
     gates = RiskGates(broker, portfolio)
     executor = ExecutionManager(broker, queue, audit, gates)

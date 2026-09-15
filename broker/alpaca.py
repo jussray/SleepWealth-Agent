@@ -34,6 +34,9 @@ class AlpacaBroker(BaseBroker):
     async def cancel_order(self, order_id: str) -> bool:  # pragma: no cover
         return False
 
+    async def cancel_all(self) -> bool:  # pragma: no cover
+        return False
+
     async def get_order_status(self, order_id: str) -> dict:  # pragma: no cover
         return {"status": "not_found"}
 
@@ -42,3 +45,12 @@ class AlpacaBroker(BaseBroker):
 
     def is_paper_only(self) -> bool:  # pragma: no cover
         return True
+
+    def paper_proof(self) -> dict:  # pragma: no cover
+        return {
+            "port": None,
+            "managed_accounts": [],
+            "configured_paper": False,
+            "provably_paper": False,
+            "external_broker_disabled": True,
+        }

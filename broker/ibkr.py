@@ -51,6 +51,9 @@ class IBKRBroker(BaseBroker):
     async def cancel_order(self, order_id: str) -> bool:  # pragma: no cover
         return False
 
+    async def cancel_all(self) -> bool:  # pragma: no cover
+        return False
+
     async def get_order_status(self, order_id: str) -> dict:  # pragma: no cover
         return {"status": "not_found"}
 
@@ -61,4 +64,10 @@ class IBKRBroker(BaseBroker):
         return True
 
     def paper_proof(self) -> dict:  # pragma: no cover
-        return {"provably_paper": False, "external_broker_disabled": True}
+        return {
+            "port": None,
+            "managed_accounts": [],
+            "configured_paper": False,
+            "provably_paper": False,
+            "external_broker_disabled": True,
+        }

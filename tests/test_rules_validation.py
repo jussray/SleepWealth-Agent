@@ -49,3 +49,70 @@ def test_each_lane_must_remain_paper_only():
         ok, errors = RulesValidator().validate(rules)
         assert not ok
         assert any(f"lanes.{lane}.paper_only" in error for error in errors)
+
+
+def test_checked_in_schema_rejects_version_type_drift():
+    rules = deepcopy(load_rules())
+    rules["version"] = 4
+
+    ok, errors = RulesValidator().validate(rules)
+
+    assert not ok
+    assert any(
+        error.startswith("schema version:") and "not of type 'string'" in error
+        for error in errors
+    )
+
+
+def test_checked_in_schema_rejects_unknown_lane_fields():
+    rules = deepcopy(load_rules())
+    rules["lanes"]["crypto"]["execution_adapter"] = "external"
+
+    ok, errors = RulesValidator().validate(rules)
+
+    assert not ok
+    assert any(
+        error.startswith("schema lanes.crypto:") and "Additional properties" in error
+        for error in errors
+    )
+
+
+def test_closed_schema_rejects_unknown_authority_shaped_fields():
+    cases = (
+        ((), "live_execution", True, "schema $:"),
+        (("capital_ladder",), "wallet", "external", "schema capital_ladder:"),
+        (("modes",), "broker", "external", "schema modes:"),
+        (("ceiling",), "auto_execute", True, "schema ceiling:"),
+    )
+
+    for path, key, value, prefix in cases:
+        rules = deepcopy(load_rules())
+        target = rules
+        for segment in path:
+            target = target[segment]
+        target[key] = value
+
+        ok, errors = RulesValidator().validate(rules)
+
+        assert not ok
+        assert any(
+            error.startswith(prefix) and "Additional properties" in error
+            for error in errors
+        )
+
+
+def test_schema_rejects_non_object_root_without_policy_crash():
+    ok, errors = RulesValidator().validate([])
+
+    assert not ok
+    assert any(error.startswith("schema $:") and "not of type 'object'" in error for error in errors)
+
+
+def test_invalid_schema_definition_fails_closed():
+    validator = RulesValidator(schema={"$schema": "http://json-schema.org/draft-07/schema#", "type": 42})
+
+    ok, errors = validator.validate(load_rules())
+
+    assert not ok
+    assert len(errors) == 1
+    assert errors[0].startswith("rules schema is invalid:")

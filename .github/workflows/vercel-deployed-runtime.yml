@@ -1,0 +1,49 @@
+name: vercel deployed runtime
+
+on:
+  workflow_run:
+    workflows: ["vercel runtime bundle"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-deployed-runtime:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Bind deployment proof to exact bundled head
+        shell: bash
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"
+          echo "exact_deployment_proof_sha=$checked_out_sha"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify canonical Vercel deployment
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python scripts/verify_vercel_deployed_runtime.py \
+            --base-url https://sleepwealth-paper-lab.vercel.app \
+            --expected-sha "$EXPECTED_HEAD_SHA" \
+            --output artifacts/vercel-deployed-runtime.json
+
+      - name: Upload deployed-runtime receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sleepwealth-vercel-deployed-runtime-${{ github.event.workflow_run.head_sha }}
+          path: artifacts/vercel-deployed-runtime.json
+          if-no-files-found: error

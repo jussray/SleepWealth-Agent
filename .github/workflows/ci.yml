@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -31,6 +32,21 @@ jobs:
           test "$checked_out_sha" = "$EXPECTED_HEAD_SHA"
           echo "exact_head_sha=$checked_out_sha"
 
+      - name: Gate main pushes by merged-PR provenance
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAIN_PROVENANCE_RECEIPT: artifacts/main-provenance-ci.json
+        run: python governance/main_provenance.py
+
+      - name: Upload CI provenance receipt
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-main-provenance-receipt
+          path: artifacts/main-provenance-ci.json
+          if-no-files-found: error
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -50,6 +66,39 @@ jobs:
         env:
           SLEEPWEALTH_MARKET_SOURCE: mock
         run: pytest tests/ -v --tb=short
+
+      - name: External crypto observer boundaries
+        run: pytest tests/test_external_crypto_sources.py tests/test_external_crypto_http.py -v --tb=short
+
+      - name: SideShift public catalog probe
+        run: |
+          python - <<'PY'
+          import json
+          from backend.external_observers import get_sideshift_public_catalog
+
+          result = get_sideshift_public_catalog()
+          catalog = result["catalog"]
+          assert result["status"] == "ok", result
+          assert result["lane"] == "crypto"
+          assert result["mode"] == "public-coin-catalog"
+          assert result["read_only"] is True
+          assert result["authority"] == "none"
+          assert result["real_money"] is False
+          assert result["live_execution"] is False
+          assert catalog["endpoint_scope"] == "GET /api/v2/coins only"
+          assert catalog["account_secret_used"] is False
+          assert catalog["wallet_connection"] is False
+          assert catalog["quote_creation"] is False
+          assert catalog["shift_creation"] is False
+          assert catalog["coins"], result
+          print(json.dumps({
+              "status": result["status"],
+              "coin_count": len(catalog["coins"]),
+              "endpoint_scope": catalog["endpoint_scope"],
+              "authority": result["authority"],
+              "live_execution": result["live_execution"],
+          }, indent=2))
+          PY
 
       - name: Stock paper smoke test
         env:
@@ -132,8 +181,9 @@ jobs:
         env:
           SLEEPWEALTH_MARKET_SOURCE: mock
           SLEEPWEALTH_AUDIT_LOG: /tmp/sleepwealth-audit.log
+          SLEEPWEALTH_RUNTIME_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python -m backend.server --host 127.0.0.1 --port 8765 >/tmp/sleepwealth-backend.log 2>&1 &
+          python -m backend.runtime_server --host 127.0.0.1 --port 8765 >/tmp/sleepwealth-backend.log 2>&1 &
           echo $! >/tmp/sleepwealth-backend.pid
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8765/health >/tmp/sleepwealth-health.json; then
@@ -159,10 +209,51 @@ jobs:
           cat /tmp/mom8-preview.log
           exit 1
 
+      - name: Start crypto sandbox wallet lab
+        env:
+          SLEEPWEALTH_CRYPTO_SANDBOX_CASH: "100"
+        run: |
+          python -m backend.crypto_sandbox_server --host 127.0.0.1 --port 8767 >/tmp/crypto-sandbox.log 2>&1 &
+          echo $! >/tmp/crypto-sandbox.pid
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8767/health >/tmp/crypto-sandbox-health.json; then
+              cat /tmp/crypto-sandbox-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/crypto-sandbox.log
+          exit 1
+
+      - name: Playwright runtime identity proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python tests/playwright_runtime_identity.py
+
       - name: Playwright Sleep Wealth proof
         env:
           SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python tests/playwright_sleepwealth.py
+
+      - name: Independently verify Sleep Wealth proof manifest
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python -m evidence.proof_verifier artifacts/proof-manifest.json \
+            --expected-sha "$EXPECTED_HEAD_SHA" \
+            --receipt artifacts/proof-verification.json
+
+      - name: Playwright crypto sandbox wallet proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CRYPTO_SANDBOX_BASE_URL: http://127.0.0.1:8767/
+        run: python tests/playwright_crypto_sandbox.py
+
+      - name: Playwright Pump Live Box proof
+        env:
+          SLEEPWEALTH_PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PUMP_LIVE_BOX_BASE_URL: http://127.0.0.1:8768/
+        run: python tests/playwright_pump_live_box.py
 
       - name: Playwright MOM8 public preview proof
         env:

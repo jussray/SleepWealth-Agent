@@ -10,6 +10,7 @@ from typing import List
 from .base import BaseBroker, Order, Position
 
 DEFAULT_CRYPTO_PRICE = 1.0
+WORKING_ORDER_STATES = {"PendingSubmit", "PreSubmitted", "Submitted", "ApiPending"}
 
 
 @dataclass
@@ -132,7 +133,19 @@ class CryptoSandboxBroker(BaseBroker):
         return {"order_id": order_id, **record}
 
     async def cancel_order(self, order_id: str) -> bool:
-        return self.orders.pop(order_id, None) is not None
+        record = self.orders.get(order_id)
+        if not isinstance(record, dict) or record.get("status") not in WORKING_ORDER_STATES:
+            return False
+        record["status"] = "Cancelled"
+        record["cancelled_at"] = datetime.now(timezone.utc)
+        return True
+
+    async def cancel_all(self) -> bool:
+        cancelled = False
+        for order_id in list(self.orders):
+            if await self.cancel_order(order_id):
+                cancelled = True
+        return cancelled
 
     async def get_order_status(self, order_id: str) -> dict:
         if order_id not in self.orders:
@@ -154,3 +167,11 @@ class CryptoSandboxBroker(BaseBroker):
 
     def is_paper_only(self) -> bool:
         return True
+
+    def paper_proof(self) -> dict:
+        return {
+            "port": None,
+            "managed_accounts": [self.wallet_id],
+            "configured_paper": True,
+            "provably_paper": True,
+        }
