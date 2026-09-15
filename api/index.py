@@ -19,6 +19,7 @@ os.environ.setdefault("SLEEPWEALTH_APPROVAL_STATE_SCOPE", "vercel-instance-ephem
 from api.mom8_assets import mom8_asset_response
 from backend.pump_live_box_server import HTML as PUMP_LIVE_BOX_HTML
 from backend.pump_live_box_server import PumpLiveBoxSession
+from backend.runtime_identity import runtime_identity
 from backend.runtime_server import RuntimeIdentityHandler
 
 
@@ -36,6 +37,21 @@ def pump_live_box_relative_path(path: str) -> str | None:
     if path.startswith(_PUMP_LIVE_BOX_PREFIX + "/"):
         return path[len(_PUMP_LIVE_BOX_PREFIX) :] or "/"
     return None
+
+
+def pump_live_box_health_payload() -> dict[str, object]:
+    """Expose non-authorizing deployed identity and money-boundary evidence."""
+    return {
+        "status": "ok",
+        "pump_network_access": "none",
+        "evidence_authority": "none",
+        "authority": "sandbox-simulation-only",
+        "real_money": False,
+        "live_execution": False,
+        "state_scope": os.environ["SLEEPWEALTH_APPROVAL_STATE_SCOPE"],
+        "runtime_identity": runtime_identity(),
+        "money_boundary": _PUMP_LIVE_BOX_SESSION.boundary(),
+    }
 
 
 class handler(RuntimeIdentityHandler):
@@ -85,19 +101,11 @@ class handler(RuntimeIdentityHandler):
         if relative_path == "/":
             return self._send_html(_PUMP_LIVE_BOX_HTML)
         if relative_path == "/health":
-            return self._send_json(
-                {
-                    "status": "ok",
-                    "pump_network_access": "none",
-                    "evidence_authority": "none",
-                    "authority": "sandbox-simulation-only",
-                    "real_money": False,
-                    "live_execution": False,
-                    "state_scope": os.environ["SLEEPWEALTH_APPROVAL_STATE_SCOPE"],
-                }
-            )
+            return self._send_json(pump_live_box_health_payload())
         if relative_path == "/api/wallet":
             return self._send_json(asyncio.run(_PUMP_LIVE_BOX_SESSION.wallet()))
+        if relative_path == "/api/money-boundary":
+            return self._send_json(_PUMP_LIVE_BOX_SESSION.boundary())
         return self._send_json(
             {"status": "not_found", "real_money": False, "live_execution": False},
             HTTPStatus.NOT_FOUND,
