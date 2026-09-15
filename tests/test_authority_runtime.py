@@ -111,6 +111,37 @@ def test_effect_cannot_exceed_trusted_grant():
     assert "effect is outside" in decision.reason
 
 
+def test_engineering_write_requires_explicit_write_grant_and_exact_head():
+    write_grant = grant(
+        grant_id="engineering-write-grant",
+        action="update_project_config",
+        effect=EffectClass.ENGINEERING_WRITE,
+        consequence=ConsequenceTier.REVERSIBLE,
+    )
+    decision = runtime(write_grant).evaluate(
+        request(
+            action="update_project_config",
+            effect=EffectClass.ENGINEERING_WRITE,
+            consequence=ConsequenceTier.REVERSIBLE,
+            grant_id="engineering-write-grant",
+        )
+    )
+    assert decision.allowed is True
+    assert decision.effect is EffectClass.ENGINEERING_WRITE
+
+    stale = runtime(write_grant).evaluate(
+        request(
+            action="update_project_config",
+            effect=EffectClass.ENGINEERING_WRITE,
+            consequence=ConsequenceTier.REVERSIBLE,
+            current_source_sha="b" * 40,
+            grant_id="engineering-write-grant",
+        )
+    )
+    assert stale.allowed is False
+    assert "stale" in stale.reason
+
+
 def test_paper_simulation_requires_explicit_paper_grant_and_practice_mode():
     paper_grant = grant(
         grant_id="paper-grant",
@@ -168,6 +199,10 @@ def test_duplicate_trusted_grant_ids_are_rejected():
 
 
 def test_runtime_has_no_live_money_effect_class():
-    assert {effect.value for effect in EffectClass} == {"read-only", "paper-simulation"}
+    assert {effect.value for effect in EffectClass} == {
+        "read-only",
+        "engineering-write",
+        "paper-simulation",
+    }
     with pytest.raises(ValueError):
         EffectClass("live-money")

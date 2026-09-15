@@ -16,6 +16,7 @@ class ConsequenceTier(IntEnum):
 
 class EffectClass(StrEnum):
     READ_ONLY = "read-only"
+    ENGINEERING_WRITE = "engineering-write"
     PAPER_SIMULATION = "paper-simulation"
 
 
@@ -84,9 +85,10 @@ class AuthorityRuntime:
     """Consumes evidence without allowing evidence or requests to create authority.
 
     Trusted grants are injected into the runtime, never supplied as request
-    payloads. The runtime exposes only read-only and paper-simulation effects.
-    Repository execution mode is checked independently from the grant. Real-money,
-    wallet, funding, transfer, mint, and live trading effects are not representable.
+    payloads. The runtime can represent read-only observation, scoped engineering
+    writes, and paper-simulation effects. Repository execution mode is checked
+    independently from the grant for market effects. Real-money, wallet, funding,
+    transfer, mint, and live trading effects are not representable.
     """
 
     def __init__(self, trusted_grants: tuple[AuthorityGrant, ...] = ()) -> None:
