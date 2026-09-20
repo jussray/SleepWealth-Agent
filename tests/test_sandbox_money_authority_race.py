@@ -25,7 +25,7 @@ RULES = {
 }
 AUTHORITY_KEY = "k" * 32
 LEDGER_KEY = "l" * 32
-ACCOUNT_FINGERPRINT = "a" * 64
+ACCOUNT_FINGERPRINT = "1ca77c76c21cc04ea67242a7810ef06c805d2ea97cf2822bd07fd97a5816fe33"
 
 
 class RevokingLedger(SandboxAuthorityLedger):
