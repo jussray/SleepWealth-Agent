@@ -6,7 +6,12 @@ import json
 import httpx
 import pytest
 
-from integrations.cash_app_pay import CashAppPayClient, CashAppPayConfig, CashAppPayCredentials
+from integrations.cash_app_pay import (
+    USER_AGENT,
+    CashAppPayClient,
+    CashAppPayConfig,
+    CashAppPayCredentials,
+)
 from integrations.solana_rpc import SolanaRpcClient, SolanaRpcConfig, transaction_fingerprint
 
 
@@ -66,7 +71,10 @@ async def test_cash_app_payment_request_is_hmac_signed_over_exact_body():
         captured["path"] = request.url.raw_path.decode()
         captured["headers"] = dict(request.headers)
         captured["body"] = request.content
-        return httpx.Response(201, json={"payment": {"id": "PWC-test", "status": "AUTHORIZED"}})
+        return httpx.Response(
+            201,
+            json={"payment": {"id": "PWC-test", "status": "AUTHORIZED"}},
+        )
 
     transport = httpx.MockTransport(handler)
     credentials = CashAppPayCredentials(
@@ -95,6 +103,7 @@ async def test_cash_app_payment_request_is_hmac_signed_over_exact_body():
     authorization = "Client client-1 key-1"
     assert headers["authorization"] == authorization
     assert headers["x-region"] == "PDX"
+    assert headers["user-agent"] == USER_AGENT
 
     body_digest = hashlib.sha256(captured["body"]).hexdigest()
     signed_headers = (
@@ -115,6 +124,7 @@ async def test_cash_app_payment_request_is_hmac_signed_over_exact_body():
 async def test_cash_app_customer_request_uses_client_id_and_requires_customer_approval():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Client client-public"
+        assert request.headers["User-Agent"] == USER_AGENT
         body = json.loads(request.content)
         action = body["request"]["actions"][0]
         assert action["type"] == "ONE_TIME_PAYMENT"
