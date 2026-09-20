@@ -30,7 +30,7 @@ RULES = {
 ISSUER_ID = "sandbox-authority-test"
 AUTHORITY_KEY = "k" * 32
 LEDGER_KEY = "l" * 32
-ACCOUNT_FINGERPRINT = "a" * 64
+ACCOUNT_FINGERPRINT = "1ca77c76c21cc04ea67242a7810ef06c805d2ea97cf2822bd07fd97a5816fe33"
 SUBJECT = "sleepwealth-sandbox-runtime"
 PROVIDER = "mock"
 
@@ -85,6 +85,7 @@ def _receipt(queue: ApprovalQueue, proposal_id: str, **overrides):
 async def test_scoped_authority_executes_through_existing_paper_path(tmp_path):
     broker, portfolio, queue, audit, executor, ledger, guarded = await _build(tmp_path)
     account = await portfolio.refresh()
+
     order = Order("AAPL", 1, "buy")
     evaluation = ProposalEvaluator(RULES).evaluate(order, account, price=MOCK_PRICE)
     proposal_id = await executor.propose_order(order, evaluation)
