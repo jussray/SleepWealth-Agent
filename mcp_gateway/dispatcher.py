@@ -17,6 +17,15 @@ def _resource_fingerprint(payload: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _valid_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and value.isascii()
+        and all(char in "0123456789abcdefABCDEF" for char in value)
+    )
+
+
 class ProviderDispatcher:
     """MCP-facing provider router with continuity, authority, and replay gates.
 
@@ -28,12 +37,17 @@ class ProviderDispatcher:
     def __init__(
         self,
         *,
+        source_sha: str,
         continuity_keys: Mapping[str, object],
         authority_keys: Mapping[str, object],
         ledger: ProductActionLedger,
         solana: SolanaRpcClient | None = None,
         cash_app_pay: CashAppPayClient | None = None,
     ) -> None:
+        source_sha = str(source_sha or "").strip()
+        if len(source_sha) < 7:
+            raise ValueError("source_sha is required for exact-build continuity")
+        self.source_sha = source_sha
         self.continuity_keys = dict(continuity_keys)
         self.authority_keys = dict(authority_keys)
         self.ledger = ledger
@@ -43,33 +57,57 @@ class ProviderDispatcher:
     def capabilities(self) -> dict[str, object]:
         return {
             "event": "mcp_provider_capabilities",
+            "source_sha": self.source_sha,
             "providers": provider_manifests(),
             "fingerprints_are_credentials": False,
             "continuity_cookies_authorize": False,
             "credentials_in_mcp_payloads": False,
-            "money_moving_actions_require_product_authority": True,
+            "authority_issuance_exposed_over_mcp": False,
+            "consequential_actions_require_product_authority": True,
         }
 
     async def dispatch(self, command: Mapping[str, object]) -> dict[str, object]:
+        caller_fingerprint = str(command.get("caller_fingerprint", "")).strip().lower()
+        subject_fingerprint = str(command.get("subject_fingerprint", "")).strip().lower()
         provider = str(command.get("provider", "")).strip().lower()
         environment = str(command.get("environment", "")).strip().lower()
         action = str(command.get("action", "")).strip().lower()
         payload = command.get("payload")
-        if not provider or not environment or not action or not isinstance(payload, Mapping):
-            return self._blocked("INVALID_COMMAND", "provider, environment, action, and payload are required")
+        if not (
+            _valid_sha256(caller_fingerprint)
+            and _valid_sha256(subject_fingerprint)
+            and provider
+            and environment
+            and action
+            and isinstance(payload, Mapping)
+        ):
+            return self._blocked(
+                "INVALID_COMMAND",
+                "caller_fingerprint, subject_fingerprint, provider, environment, action, and payload are required",
+            )
 
         try:
             manifest = get_provider_manifest(provider)
         except ValueError as exc:
             return self._blocked("UNSUPPORTED_PROVIDER", str(exc))
         if environment not in manifest.environments:
-            return self._blocked("ENVIRONMENT_CONFLICT", "provider does not support requested environment")
+            return self._blocked(
+                "ENVIRONMENT_CONFLICT",
+                "provider does not support requested environment",
+            )
         if action not in manifest.actions:
             return self._blocked("ACTION_CONFLICT", "provider does not support requested action")
         if provider == "github-control":
             return self._blocked(
                 "CONTROL_PLANE_ONLY",
                 "GitHub is represented as an MCP/control-plane caller surface, not a dispatched money provider",
+            )
+
+        configured_environment = self._configured_environment(provider)
+        if environment != configured_environment:
+            return self._blocked(
+                "PROVIDER_ENVIRONMENT_CONFLICT",
+                "requested environment does not match the configured provider client",
             )
 
         try:
@@ -87,25 +125,56 @@ class ProviderDispatcher:
         continuity = validate_continuity_cookie(cookie, trusted_keys=self.continuity_keys)
         if not continuity.accepted:
             return self._blocked(continuity.classification, continuity.reason)
+        cookie_capabilities = cookie.get("capabilities")
+        if not isinstance(cookie_capabilities, list) or action not in cookie_capabilities:
+            return self._blocked(
+                "CAPABILITY_CONFLICT",
+                "continuity cookie does not include the requested provider capability",
+            )
+        if str(cookie.get("source_sha", "")).strip() != self.source_sha:
+            return self._blocked(
+                "SOURCE_SHA_CONFLICT",
+                "continuity cookie is stale for the running SleepWealth source SHA",
+            )
         if (
-            continuity.provider != provider
+            continuity.caller_fingerprint != caller_fingerprint
+            or continuity.subject_fingerprint != subject_fingerprint
+            or continuity.provider != provider
             or continuity.environment != environment
             or continuity.provider_subject_fingerprint != account_fingerprint
         ):
             return self._blocked(
                 "CONTINUITY_CONFLICT",
-                "continuity provider/environment/account fingerprint does not match command",
+                "continuity caller/subject/provider/environment/account fingerprint does not match command",
             )
 
+        authority_required = action in manifest.authority_required_actions
         money_moving = action in manifest.money_moving_actions
         authority = command.get("authority_receipt")
         authority_receipt_id: str | None = None
         idempotency_key = str(command.get("idempotency_key", "")).strip()
-        if money_moving:
+
+        if authority_required:
             if not isinstance(authority, Mapping):
-                return self._blocked("MISSING_AUTHORITY", "money-moving action requires product authority")
+                return self._blocked(
+                    "MISSING_AUTHORITY",
+                    "consequential provider action requires product authority",
+                )
             if not idempotency_key:
-                return self._blocked("MISSING_IDEMPOTENCY", "money-moving action requires idempotency_key")
+                return self._blocked(
+                    "MISSING_IDEMPOTENCY",
+                    "consequential provider action requires idempotency_key",
+                )
+            payload_idempotency = payload.get("idempotency_key")
+            if provider == "cash-app-pay" and action in {
+                "create-customer-request",
+                "create-payment",
+            }:
+                if str(payload_idempotency or "").strip() != idempotency_key:
+                    return self._blocked(
+                        "IDEMPOTENCY_CONFLICT",
+                        "MCP command and Cash App Pay payload idempotency keys must match",
+                    )
             authority_fingerprint = str(authority.get("fingerprint", "")).lower()
             cookie_authority = str(cookie.get("authority_fingerprint") or "").lower()
             if not authority_fingerprint or cookie_authority != authority_fingerprint:
@@ -116,6 +185,7 @@ class ProviderDispatcher:
             decision = validate_product_action_authority(
                 authority,
                 trusted_keys=self.authority_keys,
+                subject_fingerprint=subject_fingerprint,
                 provider=provider,
                 environment=environment,
                 account_fingerprint=account_fingerprint,
@@ -149,7 +219,7 @@ class ProviderDispatcher:
         try:
             result = await self._call(provider, action, payload)
         except Exception as exc:
-            if money_moving:
+            if authority_required:
                 try:
                     self.ledger.classify(provider, idempotency_key, "reconcile_required")
                 except Exception:
@@ -160,12 +230,16 @@ class ProviderDispatcher:
                         f"provider outcome is unknown after dispatch error: {type(exc).__name__}: {exc}",
                     ),
                     "reconciliation_required": True,
+                    "money_moving": money_moving,
                     "resource_fingerprint": resource_fingerprint,
                     "authority_receipt_id": authority_receipt_id,
                 }
-            return self._blocked("PROVIDER_ERROR", f"provider request failed: {type(exc).__name__}: {exc}")
+            return self._blocked(
+                "PROVIDER_ERROR",
+                f"provider request failed: {type(exc).__name__}: {exc}",
+            )
 
-        if money_moving:
+        if authority_required:
             try:
                 self.ledger.classify(provider, idempotency_key, "completed")
                 ledger_persisted = True
@@ -179,6 +253,7 @@ class ProviderDispatcher:
                 "provider": provider,
                 "environment": environment,
                 "action": action,
+                "money_moving": money_moving,
                 "resource_fingerprint": resource_fingerprint,
                 "account_fingerprint": account_fingerprint,
                 "authority_receipt_id": authority_receipt_id,
@@ -200,6 +275,17 @@ class ProviderDispatcher:
             "provider_result": result,
             "execution_authorized": False,
         }
+
+    def _configured_environment(self, provider: str) -> str:
+        if provider == "solana-rpc":
+            if self.solana is None:
+                raise ValueError("Solana provider is not configured")
+            return self.solana.config.network
+        if provider == "cash-app-pay":
+            if self.cash_app_pay is None:
+                raise ValueError("Cash App Pay provider is not configured")
+            return self.cash_app_pay.config.environment
+        raise ValueError(f"no configured environment exists for provider {provider}")
 
     def _scope(
         self,
@@ -235,6 +321,14 @@ class ProviderDispatcher:
                     int(payload["amount_cents"]) / 100.0,
                     "USD",
                 )
+            if action == "create-customer-request":
+                body = self._cash_customer_request_body(payload)
+                return (
+                    account_fingerprint,
+                    self.cash_app_pay.payment_resource_fingerprint(body),
+                    int(payload["amount_cents"]) / 100.0,
+                    "USD",
+                )
             return account_fingerprint, _resource_fingerprint(payload), None, None
 
         raise ValueError(f"no scope resolver exists for provider {provider}")
@@ -253,6 +347,26 @@ class ProviderDispatcher:
             },
         }
 
+    @staticmethod
+    def _cash_customer_request_body(payload: Mapping[str, object]) -> dict[str, object]:
+        merchant_id = str(payload["merchant_id"])
+        return {
+            "idempotency_key": str(payload["idempotency_key"]),
+            "request": {
+                "actions": [
+                    {
+                        "type": "ONE_TIME_PAYMENT",
+                        "scope_id": merchant_id,
+                        "amount": int(payload["amount_cents"]),
+                        "currency": "USD",
+                    }
+                ],
+                "channel": str(payload.get("channel", "IN_PERSON")),
+                "redirect_url": str(payload["redirect_url"]),
+                "reference_id": str(payload["reference_id"]),
+            },
+        }
+
     async def _call(
         self,
         provider: str,
@@ -264,9 +378,13 @@ class ProviderDispatcher:
             if action == "get-balance":
                 return await self.solana.get_balance(str(payload["public_key"]))
             if action == "simulate-signed-transaction":
-                return await self.solana.simulate_signed_transaction(str(payload["transaction_base64"]))
+                return await self.solana.simulate_signed_transaction(
+                    str(payload["transaction_base64"])
+                )
             if action == "broadcast-signed-transaction":
-                return await self.solana.broadcast_signed_transaction(str(payload["transaction_base64"]))
+                return await self.solana.broadcast_signed_transaction(
+                    str(payload["transaction_base64"])
+                )
             if action == "get-signature-status":
                 return await self.solana.get_signature_status(str(payload["signature"]))
 
