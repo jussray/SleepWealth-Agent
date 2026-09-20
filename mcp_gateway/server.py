@@ -20,6 +20,7 @@ def _required_env(name: str) -> str:
 
 
 def build_dispatcher_from_env() -> ProviderDispatcher:
+    source_sha = _required_env("SLEEPWEALTH_SOURCE_SHA")
     cookie_issuer = _required_env("SLEEPWEALTH_MCP_COOKIE_ISSUER")
     cookie_key = _required_env("SLEEPWEALTH_MCP_COOKIE_KEY")
     authority_issuer = _required_env("SLEEPWEALTH_MCP_AUTHORITY_ISSUER")
@@ -54,9 +55,13 @@ def build_dispatcher_from_env() -> ProviderDispatcher:
                 secret=secret,
                 region=region,
             )
-        cash_app_pay = CashAppPayClient(CashAppPayConfig(cash_environment), credentials=credentials)
+        cash_app_pay = CashAppPayClient(
+            CashAppPayConfig(cash_environment),
+            credentials=credentials,
+        )
 
     return ProviderDispatcher(
+        source_sha=source_sha,
         continuity_keys={cookie_issuer: cookie_key},
         authority_keys={authority_issuer: authority_key},
         ledger=ProductActionLedger(ledger_path, ledger_key),
@@ -70,20 +75,23 @@ def build_mcp_server(dispatcher: ProviderDispatcher) -> MCPServer:
         "SleepWealth Provider Gateway",
         instructions=(
             "Use capabilities first. Fingerprints/cookies are continuity markers, never credentials. "
-            "Money-moving actions require a separately trusted product authority receipt. Never send "
-            "private keys or provider secrets through MCP payloads."
+            "Consequential provider actions require a separately trusted product authority receipt. "
+            "Never send private keys or provider secrets through MCP payloads."
         ),
     )
 
     @server.tool()
     def sleepwealth_capabilities() -> dict[str, object]:
-        """List provider capabilities and authority boundaries."""
+        """List provider capabilities, source identity, and authority boundaries."""
         return dispatcher.capabilities()
 
     @server.tool()
     def sleepwealth_validate_continuity(cookie: dict[str, object]) -> dict[str, object]:
         """Validate one authenticated non-authorizing continuity cookie."""
-        return validate_continuity_cookie(cookie, trusted_keys=dispatcher.continuity_keys).to_dict()
+        return validate_continuity_cookie(
+            cookie,
+            trusted_keys=dispatcher.continuity_keys,
+        ).to_dict()
 
     @server.tool()
     async def sleepwealth_dispatch(command: dict[str, object]) -> dict[str, object]:
