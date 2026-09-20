@@ -74,6 +74,7 @@ class ProductAuthorityDecision:
     classification: str
     reason: str
     receipt_id: str | None = None
+    subject_fingerprint: str | None = None
     provider: str | None = None
     action: str | None = None
     environment: str | None = None
@@ -87,6 +88,7 @@ class ProductAuthorityDecision:
             "classification": self.classification,
             "reason": self.reason,
             "receipt_id": self.receipt_id,
+            "subject_fingerprint": self.subject_fingerprint,
             "provider": self.provider,
             "action": self.action,
             "environment": self.environment,
@@ -120,8 +122,8 @@ def issue_product_action_authority(
     This function is intentionally not exposed as an MCP tool. The trusted
     deployment control plane must first verify adult eligibility, current human
     approval, and a live provider/account session. The resulting fingerprints are
-    bound here so an MCP caller cannot swap provider, account, action, payload,
-    amount, or idempotency identity after approval.
+    bound here so an MCP caller cannot swap subject, provider, account, action,
+    payload, amount, or idempotency identity after approval.
     """
 
     key = _key(issuer_key)
@@ -187,6 +189,7 @@ def validate_product_action_authority(
     receipt: Mapping[str, object] | None,
     *,
     trusted_keys: Mapping[str, object] | None,
+    subject_fingerprint: str,
     provider: str,
     environment: str,
     account_fingerprint: str,
@@ -201,6 +204,7 @@ def validate_product_action_authority(
         return ProductAuthorityDecision(False, "MISSING", "product action authority is required")
 
     receipt_id = str(receipt.get("receipt_id", "")) or None
+    receipt_subject = str(receipt.get("subject_fingerprint", "")) or None
     receipt_provider = str(receipt.get("provider", "")) or None
     receipt_action = str(receipt.get("action", "")) or None
     receipt_environment = str(receipt.get("environment", "")) or None
@@ -214,6 +218,7 @@ def validate_product_action_authority(
             classification,
             reason,
             receipt_id,
+            receipt_subject,
             receipt_provider,
             receipt_action,
             receipt_environment,
@@ -230,7 +235,7 @@ def validate_product_action_authority(
         and receipt_id.startswith("PAA-")
         and isinstance(receipt.get("issuer_id"), str)
         and bool(str(receipt.get("issuer_id", "")).strip())
-        and _valid_sha256(receipt.get("subject_fingerprint"))
+        and _valid_sha256(receipt_subject)
         and _valid_sha256(receipt_account)
         and _valid_sha256(receipt_resource)
         and _valid_sha256(receipt.get("human_approval_fingerprint"))
@@ -285,7 +290,10 @@ def validate_product_action_authority(
     if not freshness_ok:
         return reject("STALE", "product action authority is outside its freshness window")
 
+    if not _valid_sha256(subject_fingerprint):
+        return reject("INVALID_REQUEST", "subject_fingerprint must be a SHA-256 value")
     requested_scope = (
+        subject_fingerprint.lower(),
         provider.strip().lower(),
         environment.strip().lower(),
         account_fingerprint.lower(),
@@ -294,6 +302,7 @@ def validate_product_action_authority(
         idempotency_key.strip(),
     )
     receipt_scope = (
+        str(receipt_subject).lower(),
         str(receipt_provider).lower(),
         str(receipt_environment).lower(),
         str(receipt_account).lower(),
@@ -302,7 +311,10 @@ def validate_product_action_authority(
         str(receipt_idem),
     )
     if requested_scope != receipt_scope:
-        return reject("SCOPE_CONFLICT", "provider/account/action/resource/idempotency scope changed")
+        return reject(
+            "SCOPE_CONFLICT",
+            "subject/provider/account/action/resource/idempotency scope changed",
+        )
 
     max_amount = receipt.get("max_amount")
     receipt_currency = receipt.get("currency")
@@ -321,6 +333,7 @@ def validate_product_action_authority(
         "VERIFIED_PRODUCT_AUTHORITY",
         "trusted product authority is fresh and exactly scoped",
         receipt_id,
+        receipt_subject,
         receipt_provider,
         receipt_action,
         receipt_environment,
