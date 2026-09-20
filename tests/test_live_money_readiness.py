@@ -1,27 +1,66 @@
 import hashlib
+import hmac
 import json
+from datetime import datetime, timezone
 
 from gate.live_money_readiness import live_money_readiness
 
+ELIGIBILITY_KEY = b"sleepwealth-test-eligibility-key-32-bytes!!"
+ELIGIBILITY_ISSUER = "test-broker-control-plane"
+EVALUATED_AT = datetime(2026, 9, 20, 4, 0, tzinfo=timezone.utc)
+
+
+def _canonical_payload(payload: dict) -> bytes:
+    canonical_payload = dict(payload)
+    canonical_payload.pop("fingerprint", None)
+    canonical_payload.pop("receipt_auth", None)
+    canonical = json.dumps(
+        canonical_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return canonical.encode("utf-8")
+
 
 def _fingerprinted_receipt(payload: dict) -> dict:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return {**payload, "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+    return {
+        **payload,
+        "fingerprint": hashlib.sha256(_canonical_payload(payload)).hexdigest(),
+    }
 
 
-def _valid_adult_eligibility_receipt() -> dict:
-    return _fingerprinted_receipt(
-        {
-            "event": "broker_account_eligibility_observed",
-            "classification": "VERIFIED",
-            "source": "broker-provider",
-            "broker": "eligible-provider",
-            "account_holder_age_verified": True,
-            "minimum_age": 18,
-            "trading_enabled": True,
-            "live_money_allowed": True,
-            "execution_authorized": False,
-        }
+def _signed_adult_eligibility_receipt(**overrides) -> dict:
+    payload = {
+        "event": "broker_account_eligibility_observed",
+        "classification": "VERIFIED",
+        "source": "broker-provider",
+        "issuer_id": ELIGIBILITY_ISSUER,
+        "broker": "eligible-provider",
+        "account_fingerprint": hashlib.sha256(b"provider-account-123").hexdigest(),
+        "account_holder_age_verified": True,
+        "minimum_age": 18,
+        "trading_enabled": True,
+        "live_money_allowed": True,
+        "execution_authorized": False,
+        "issued_at": "2026-09-20T03:55:00+00:00",
+        "expires_at": "2026-09-20T04:55:00+00:00",
+    }
+    payload.update(overrides)
+    receipt = _fingerprinted_receipt(payload)
+    receipt["receipt_auth"] = hmac.new(
+        ELIGIBILITY_KEY,
+        _canonical_payload(receipt),
+        hashlib.sha256,
+    ).hexdigest()
+    return receipt
+
+
+def _readiness(receipt=None, *, keys=None, evaluated_at=EVALUATED_AT):
+    return live_money_readiness(
+        broker_eligibility_receipt=receipt,
+        trusted_eligibility_keys=keys,
+        evaluated_at=evaluated_at,
     )
 
 
@@ -111,16 +150,23 @@ def test_broker_eligibility_is_provider_scoped_and_non_authorizing():
     assert receipt["execution_authorized"] is False
 
 
-def test_provider_verified_18_plus_account_clears_only_eligibility_gates():
-    receipt = live_money_readiness(
-        broker_eligibility_receipt=_valid_adult_eligibility_receipt()
+def test_trusted_provider_verified_18_plus_account_clears_only_eligibility_gates():
+    receipt = _readiness(
+        _signed_adult_eligibility_receipt(),
+        keys={ELIGIBILITY_ISSUER: ELIGIBILITY_KEY},
     )
 
-    classifications = {check["code"]: check["classification"] for check in receipt["checks"]}
+    classifications = {
+        check["code"]: check["classification"] for check in receipt["checks"]
+    }
     assert classifications["ADULT_ACCOUNT_ELIGIBILITY"] == "VERIFIED"
     assert classifications["BROKER_ACCOUNT_ELIGIBILITY"] == "VERIFIED"
-    assert receipt["broker_eligibility"]["classification"] == "VERIFIED_ELIGIBLE_ADULT_ACCOUNT"
+    assert (
+        receipt["broker_eligibility"]["classification"]
+        == "VERIFIED_ELIGIBLE_ADULT_ACCOUNT"
+    )
     assert receipt["broker_eligibility"]["minimum_age"] == 18
+    assert len(receipt["broker_eligibility"]["account_fingerprint"]) == 64
     assert receipt["execution_authorized"] is False
     assert receipt["ready"] is False
     assert "ADULT_ACCOUNT_ELIGIBILITY" not in receipt["blockers"]
@@ -128,22 +174,56 @@ def test_provider_verified_18_plus_account_clears_only_eligibility_gates():
     assert "LIVE_EXECUTION_MODE" in receipt["blockers"]
 
 
-def test_self_attested_or_underage_receipt_cannot_clear_adult_gate():
-    forged = _fingerprinted_receipt(
-        {
-            "event": "broker_account_eligibility_observed",
-            "classification": "VERIFIED",
-            "source": "self-attested",
-            "broker": "eligible-provider",
-            "account_holder_age_verified": True,
-            "minimum_age": 17,
-            "trading_enabled": True,
-            "live_money_allowed": True,
-            "execution_authorized": False,
-        }
+def test_hash_only_provider_claim_cannot_mint_adult_trust():
+    unsigned = _signed_adult_eligibility_receipt()
+    unsigned.pop("receipt_auth")
+
+    receipt = _readiness(unsigned, keys={ELIGIBILITY_ISSUER: ELIGIBILITY_KEY})
+
+    assert receipt["broker_eligibility"]["classification"] == "UNTRUSTED"
+    assert receipt["broker_eligibility"]["accepted"] is False
+    assert "ADULT_ACCOUNT_ELIGIBILITY" in receipt["blockers"]
+
+
+def test_unknown_issuer_or_wrong_key_cannot_clear_adult_gate():
+    signed = _signed_adult_eligibility_receipt()
+
+    missing_issuer = _readiness(signed, keys={"another-issuer": ELIGIBILITY_KEY})
+    wrong_key = _readiness(
+        signed,
+        keys={ELIGIBILITY_ISSUER: b"x" * 32},
     )
 
-    receipt = live_money_readiness(broker_eligibility_receipt=forged)
+    assert missing_issuer["broker_eligibility"]["classification"] == "UNTRUSTED"
+    assert wrong_key["broker_eligibility"]["classification"] == "UNTRUSTED"
+    assert missing_issuer["execution_authorized"] is False
+    assert wrong_key["execution_authorized"] is False
+
+
+def test_expired_adult_eligibility_receipt_is_stale_not_verified():
+    expired = _signed_adult_eligibility_receipt(
+        issued_at="2026-09-18T02:00:00+00:00",
+        expires_at="2026-09-18T03:00:00+00:00",
+    )
+
+    receipt = _readiness(expired, keys={ELIGIBILITY_ISSUER: ELIGIBILITY_KEY})
+
+    assert receipt["broker_eligibility"]["classification"] == "STALE"
+    assert receipt["broker_eligibility"]["accepted"] is False
+    assert "ADULT_ACCOUNT_ELIGIBILITY" in receipt["blockers"]
+    assert "BROKER_ACCOUNT_ELIGIBILITY" in receipt["blockers"]
+
+
+def test_self_attested_or_underage_receipt_cannot_clear_adult_gate():
+    forged = _signed_adult_eligibility_receipt(
+        source="self-attested",
+        minimum_age=17,
+    )
+
+    receipt = _readiness(
+        forged,
+        keys={ELIGIBILITY_ISSUER: ELIGIBILITY_KEY},
+    )
 
     assert receipt["broker_eligibility"]["classification"] == "INVALID"
     assert receipt["broker_eligibility"]["accepted"] is False
