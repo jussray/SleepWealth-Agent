@@ -6,15 +6,17 @@ Expose SleepWealth as a standard MCP server that GitHub/Codex/ChatGPT-compatible
 
 The product flow is:
 
-`MCP caller -> continuity cookie -> exact provider/account/resource fingerprint -> trusted product authority -> replay/kill ledger -> provider adapter -> provider receipt -> reconciliation`
+`MCP caller fingerprint + human subject fingerprint + exact source SHA -> continuity cookie -> provider/account/resource fingerprint -> trusted product authority -> replay/kill ledger -> provider adapter -> provider receipt -> reconciliation`
 
 ## Fingerprints and cookies
 
-- Fingerprints are SHA-256 continuity identities for callers, provider subjects, approved resources, and authority receipts.
+- Fingerprints are SHA-256 continuity identities for the MCP caller, human subject, provider subject/account, approved resource, and authority receipt.
 - Continuity cookies are short-lived HMAC-authenticated state markers.
+- Cookies bind the exact SleepWealth source SHA and explicit capability set.
 - Cookies explicitly carry `authorizes=false`, `execution_authorized=false`, and `contains_secret=false`.
-- Neither a fingerprint nor a cookie is accepted as provider credentials or money-moving authority.
+- Neither a fingerprint nor a cookie is accepted as provider credentials or provider-action authority.
 - Provider credentials stay in deployment secret storage and are loaded into provider clients at runtime.
+- A cookie from a different caller, subject, build SHA, provider account, environment, or capability fails closed.
 
 ## MCP tools
 
@@ -41,7 +43,7 @@ Supported product actions:
 
 The adapter has an external-signer boundary. It never accepts a private key. A broadcast action accepts an already-signed base64 transaction, fingerprints the exact transaction bytes, and requires product authority bound to that fingerprint before calling `sendTransaction`.
 
-Networks are explicit: `devnet`, `testnet`, or `mainnet-beta`. The RPC endpoint must use HTTPS outside loopback.
+Networks are explicit: `devnet`, `testnet`, or `mainnet-beta`. The requested environment must equal the network configured in the running provider client. The RPC endpoint must use HTTPS outside loopback.
 
 ## Cash App Pay
 
@@ -53,16 +55,16 @@ Supported product actions:
 - `create-payment`
 - `retrieve-payment`
 
-`create-payment` requires the Cash App grant produced by customer approval plus SleepWealth product authority. Network API requests are HMAC-SHA256 signed, idempotent, and use runtime credentials that never enter MCP payloads or receipts.
+Both customer-request creation and payment dispatch are external consequential actions and therefore require SleepWealth product authority. `create-payment` additionally requires the Cash App grant produced by customer approval. Network API requests are HMAC-SHA256 signed, idempotent, and use runtime credentials that never enter MCP payloads or receipts.
 
-Sandbox and production are distinct environments.
+The MCP command idempotency key must equal the Cash App request-body idempotency key. Sandbox and production are distinct environments, and the requested environment must match the configured Cash App client.
 
-## Money-moving authority
+## Product action authority
 
 A product action authority receipt binds:
 
 - trusted issuer
-- subject fingerprint
+- human subject fingerprint
 - provider
 - environment
 - provider account/merchant fingerprint
@@ -81,12 +83,13 @@ Changing any bound field invalidates the authority.
 
 The product action ledger is HMAC-sealed and file-locked. It records whether a provider/idempotency pair has crossed the provider boundary. A second attempt is refused. Authority can be revoked and a global product-action kill switch can be engaged.
 
-The ledger is checked once when an action is reserved and again immediately before dispatch. If a provider call errors after crossing the dispatch boundary, the outcome is classified `RECONCILE_REQUIRED` rather than retried blindly.
+The ledger is checked once when an action is reserved and again immediately before dispatch. If a consequential provider call errors after crossing the dispatch boundary, the outcome is classified `RECONCILE_REQUIRED` rather than retried blindly.
 
 ## Runtime configuration
 
 Required MCP control-plane variables:
 
+- `SLEEPWEALTH_SOURCE_SHA`
 - `SLEEPWEALTH_MCP_COOKIE_ISSUER`
 - `SLEEPWEALTH_MCP_COOKIE_KEY`
 - `SLEEPWEALTH_MCP_AUTHORITY_ISSUER`
