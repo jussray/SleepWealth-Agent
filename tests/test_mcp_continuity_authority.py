@@ -188,7 +188,7 @@ def test_action_ledger_blocks_replay_revocation_and_kill_switch(tmp_path):
 
 
 def test_authority_rejects_short_keys_and_bad_fingerprints():
-    with pytest.raises(ValueError, match="32\+"):
+    with pytest.raises(ValueError, match=r"32\+"):
         issue_product_action_authority(
             issuer_id="issuer",
             issuer_key="short",
