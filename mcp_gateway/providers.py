@@ -9,6 +9,7 @@ class ProviderManifest:
     provider_class: str
     environments: tuple[str, ...]
     actions: tuple[str, ...]
+    authority_required_actions: tuple[str, ...]
     money_moving_actions: tuple[str, ...]
     customer_approval_actions: tuple[str, ...]
     external_signer_actions: tuple[str, ...]
@@ -16,7 +17,10 @@ class ProviderManifest:
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
-        return {key: list(value) if isinstance(value, tuple) else value for key, value in payload.items()}
+        return {
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in payload.items()
+        }
 
 
 _PROVIDER_MANIFESTS = {
@@ -25,6 +29,7 @@ _PROVIDER_MANIFESTS = {
         provider_class="control-plane",
         environments=("external",),
         actions=("repo-read", "repo-write", "pr-review", "workflow-observe"),
+        authority_required_actions=(),
         money_moving_actions=(),
         customer_approval_actions=(),
         external_signer_actions=(),
@@ -43,6 +48,7 @@ _PROVIDER_MANIFESTS = {
             "broadcast-signed-transaction",
             "get-signature-status",
         ),
+        authority_required_actions=("broadcast-signed-transaction",),
         money_moving_actions=("broadcast-signed-transaction",),
         customer_approval_actions=("broadcast-signed-transaction",),
         external_signer_actions=("broadcast-signed-transaction",),
@@ -56,12 +62,13 @@ _PROVIDER_MANIFESTS = {
         provider_class="payment-network",
         environments=("sandbox", "production"),
         actions=("create-customer-request", "create-payment", "retrieve-payment"),
+        authority_required_actions=("create-customer-request", "create-payment"),
         money_moving_actions=("create-payment",),
-        customer_approval_actions=("create-payment",),
+        customer_approval_actions=("create-customer-request", "create-payment"),
         external_signer_actions=(),
         notes=(
             "Cash App Pay is modeled as customer-approved merchant payments, not arbitrary peer-to-peer balance control.",
-            "A Cash App grant plus SleepWealth product authority is required before create-payment dispatch.",
+            "Customer-request creation and payment dispatch both require SleepWealth product authority; payment also requires the Cash App customer grant.",
         ),
     ),
 }
