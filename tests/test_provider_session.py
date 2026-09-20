@@ -62,6 +62,30 @@ def test_minted_provider_session_is_authenticated_but_non_authorizing():
     assert receipt["order_submit_capability"] is False
 
 
+def test_authentic_session_with_no_enabled_market_permission_is_blocked():
+    receipt = mint_provider_session_receipt(
+        _observation(
+            account_status="ACCOUNT_UPDATED",
+            crypto_status="INACTIVE",
+            trading_blocked=True,
+            asset_permissions=[],
+        ),
+        issuer_id=ISSUER,
+        receipt_key=KEY,
+        issued_at=NOW,
+    )
+
+    result = validate_provider_session_receipt(
+        receipt,
+        trusted_keys={ISSUER: KEY},
+        evaluated_at=NOW + timedelta(seconds=30),
+    )
+
+    assert result["classification"] == "BLOCKED_ACCOUNT"
+    assert result["accepted"] is False
+    assert result["asset_permissions"] == []
+
+
 def test_forged_or_unknown_issuer_session_is_untrusted():
     receipt = mint_provider_session_receipt(
         _observation(), issuer_id=ISSUER, receipt_key=KEY, issued_at=NOW
