@@ -33,6 +33,17 @@ def _canonical(payload: Mapping[str, object]) -> bytes:
     ).encode("utf-8")
 
 
+def _canonical_observation(observation: Mapping[str, object]) -> bytes:
+    body = dict(observation)
+    body.pop("observation_fingerprint", None)
+    return json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+
+
 def _key(value: object) -> bytes:
     if isinstance(value, bytes):
         result = value
@@ -64,7 +75,17 @@ def _time(value: object) -> datetime | None:
 
 def _utc(value: datetime | None = None) -> datetime:
     current = value or datetime.now(timezone.utc)
-    return current.replace(tzinfo=timezone.utc) if current.tzinfo is None else current.astimezone(timezone.utc)
+    if current.tzinfo is None:
+        return current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc)
+
+
+def _observation_fingerprint_matches(observation: Mapping[str, object]) -> bool:
+    supplied = observation.get("observation_fingerprint")
+    if not _sha256(supplied):
+        return False
+    expected = hashlib.sha256(_canonical_observation(observation)).hexdigest()
+    return hmac.compare_digest(str(supplied).lower(), expected.lower())
 
 
 def _observation_ok(observation: Mapping[str, object]) -> bool:
@@ -82,7 +103,7 @@ def _observation_ok(observation: Mapping[str, object]) -> bool:
         and isinstance(permissions, list)
         and len(permissions) == len(set(permissions))
         and all(item in ALLOWED_ASSET_PERMISSIONS for item in permissions)
-        and _sha256(observation.get("observation_fingerprint"))
+        and _observation_fingerprint_matches(observation)
         and _time(observation.get("observed_at")) is not None
     )
 
@@ -220,7 +241,10 @@ def validate_provider_session_receipt(
     return {
         "classification": "VERIFIED_LIVE_SESSION",
         "accepted": True,
-        "reason": "trusted runtime recently observed this live provider/account session; no execution authority is granted",
+        "reason": (
+            "trusted runtime recently observed this live provider/account session; "
+            "no execution authority is granted"
+        ),
         "provider": receipt["provider"],
         "account_fingerprint": receipt["account_fingerprint"],
         "asset_permissions": list(permissions),
