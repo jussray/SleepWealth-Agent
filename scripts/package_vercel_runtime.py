@@ -47,6 +47,7 @@ RUNTIME_FILES = (
     "gate/pump_practice_graduation.py",
     "market/__init__.py",
     "market/external_sources.py",
+    "market/investor_lens.py",
     "market/lanes.py",
     "market/observation.py",
     "market/providers.py",

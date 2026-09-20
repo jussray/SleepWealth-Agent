@@ -91,6 +91,27 @@ python -m cli.main run --mode paper --broker mock --symbol AAPL --qty 1 --side b
 
 Live execution is intentionally disabled. The pre-live gate remains as a design and testing artifact only; it cannot unlock real-money execution.
 
+## Investor research lens
+
+Every paper evaluation now carries a non-authorizing `investor_lens` receipt. It applies
+durable research questions drawn from Berkshire Hathaway, Fundsmith, Nick Sleep's Nomad
+letters, Bridgewater, and Howard Marks/Oaktree:
+
+- quality and long-duration compounding
+- scale benefits shared with customers
+- valuation and margin-of-safety discipline
+- balance-sheet and financing resilience
+- macro, geographic, inflation, and supply-chain diversification
+- trend confirmation only as secondary evidence
+
+Current market-regime observations expire instead of becoming permanent rules. Public
+manager holdings such as SEC Form 13F disclosures are explicitly zero-weight context:
+they cannot become buy/sell instructions, position sizing, approval, or execution
+authority.
+
+The investor lens does **not** alter `allowed`, the human ceiling, approval state, risk
+gates, or broker behavior. It is paper-only decision-support metadata.
+
 ## Honest limits
 
 This does not pick winners. There is no alpha in this repo. It is the governance and
