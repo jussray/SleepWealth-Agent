@@ -189,6 +189,19 @@ class SandboxMoneyExecutionManager:
             }
         )
 
+        active, active_reason = self._reserved_authority_still_active(
+            receipt_id,
+            idempotency_key,
+        )
+        if not active:
+            self.ledger.classify(idempotency_key, "blocked")
+            return await self._block(
+                proposal_id,
+                active_reason,
+                classification="AUTHORITY_STATE_CHANGED",
+                receipt_id=receipt_id,
+            )
+
         result = await self.execution_manager.execute_approved(proposal_id)
         if result.get("reconciliation_required") is True:
             ledger_state = "reconcile_required"
@@ -219,6 +232,29 @@ class SandboxMoneyExecutionManager:
             "sandbox_only": True,
             "live_execution_authorized": False,
         }
+
+    def _reserved_authority_still_active(
+        self,
+        receipt_id: str,
+        idempotency_key: str,
+    ) -> tuple[bool, str]:
+        state = self.ledger.snapshot()
+        if state.get("kill_switch") is True:
+            return False, "sandbox authority kill switch changed after reservation"
+        revoked = state.get("revoked_receipts")
+        if isinstance(revoked, list) and receipt_id in {str(value) for value in revoked}:
+            return False, "sandbox authority receipt was revoked after reservation"
+        idempotency = state.get("idempotency")
+        if not isinstance(idempotency, dict):
+            return False, "sandbox authority idempotency state is unavailable"
+        reservation = idempotency.get(idempotency_key)
+        if not isinstance(reservation, dict):
+            return False, "sandbox authority reservation disappeared"
+        if reservation.get("receipt_id") != receipt_id:
+            return False, "sandbox authority reservation changed receipt identity"
+        if reservation.get("state") != "reserved":
+            return False, "sandbox authority reservation is not executable"
+        return True, "reserved authority remains active"
 
     async def _block(
         self,
