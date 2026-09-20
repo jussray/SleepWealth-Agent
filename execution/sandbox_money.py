@@ -72,10 +72,11 @@ class SandboxMoneyExecutionManager:
         receipt_id = str(receipt["receipt_id"])
         idempotency_key = str(receipt["idempotency_key"])
 
-        if not self.execution_manager.broker.is_paper_only():
+        paper_ok, paper_reason = self._paper_broker_is_proved()
+        if not paper_ok:
             return await self._block(
                 proposal_id,
-                "sandbox authority refuses a broker that is not provably paper-only",
+                paper_reason,
                 classification="LIVE_BROKER_REFUSED",
                 receipt_id=receipt_id,
             )
@@ -175,32 +176,46 @@ class SandboxMoneyExecutionManager:
                 receipt_id=receipt_id,
             )
 
-        await self.execution_manager.audit_logger.log(
-            {
-                "event": "sandbox_money_authority_reserved",
-                "proposal_id": proposal_id,
-                "receipt_id": receipt_id,
-                "authority_fingerprint": receipt.get("fingerprint"),
-                "provider": self.provider,
-                "account_fingerprint": self.account_fingerprint,
-                "idempotency_key": idempotency_key,
+        try:
+            await self.execution_manager.audit_logger.log(
+                {
+                    "event": "sandbox_money_authority_reserved",
+                    "proposal_id": proposal_id,
+                    "receipt_id": receipt_id,
+                    "authority_fingerprint": receipt.get("fingerprint"),
+                    "provider": self.provider,
+                    "account_fingerprint": self.account_fingerprint,
+                    "idempotency_key": idempotency_key,
+                    "sandbox_only": True,
+                    "live_execution_authorized": False,
+                }
+            )
+        except Exception as exc:
+            state_error = self._best_effort_classify(idempotency_key, "blocked")
+            return {
+                "error": f"sandbox authority reservation audit failed: {type(exc).__name__}: {exc}",
+                "classification": "AUTHORITY_AUDIT_BLOCKED",
+                "sandbox_authority_state": "blocked",
+                "sandbox_authority_state_error": state_error,
                 "sandbox_only": True,
                 "live_execution_authorized": False,
             }
-        )
 
         active, active_reason = self._reserved_authority_still_active(
             receipt_id,
             idempotency_key,
         )
         if not active:
-            self.ledger.classify(idempotency_key, "blocked")
-            return await self._block(
+            state_error = self._best_effort_classify(idempotency_key, "blocked")
+            result = await self._block(
                 proposal_id,
                 active_reason,
                 classification="AUTHORITY_STATE_CHANGED",
                 receipt_id=receipt_id,
             )
+            if state_error:
+                result["sandbox_authority_state_error"] = state_error
+            return result
 
         result = await self.execution_manager.execute_approved(proposal_id)
         if result.get("reconciliation_required") is True:
@@ -209,29 +224,95 @@ class SandboxMoneyExecutionManager:
             ledger_state = "blocked"
         else:
             ledger_state = "completed"
-        self.ledger.classify(idempotency_key, ledger_state)
 
-        await self.execution_manager.audit_logger.log(
-            {
-                "event": "sandbox_money_authority_consumed",
-                "proposal_id": proposal_id,
-                "receipt_id": receipt_id,
-                "idempotency_key": idempotency_key,
-                "authority_state": ledger_state,
-                "execution_order_id": result.get("order_id"),
-                "reconciliation_required": result.get("reconciliation_required", False),
+        try:
+            self.ledger.classify(idempotency_key, ledger_state)
+        except Exception as exc:
+            state_error = f"{type(exc).__name__}: {exc}"
+            audit_error = None
+            try:
+                await self.execution_manager.audit_logger.log(
+                    {
+                        "event": "sandbox_money_authority_reconcile_required",
+                        "proposal_id": proposal_id,
+                        "receipt_id": receipt_id,
+                        "idempotency_key": idempotency_key,
+                        "reason": "execution result exists but authority ledger state could not persist",
+                        "authority_state_error": state_error,
+                        "execution_order_id": result.get("order_id"),
+                        "sandbox_only": True,
+                        "live_execution_authorized": False,
+                    }
+                )
+            except Exception as audit_exc:
+                audit_error = f"{type(audit_exc).__name__}: {audit_exc}"
+            return {
+                **result,
+                "sandbox_authority": "CONSUMED_STATE_DEGRADED",
+                "sandbox_authority_receipt_id": receipt_id,
+                "sandbox_authority_state": "reconcile_required",
+                "sandbox_authority_ledger_persisted": False,
+                "sandbox_authority_state_error": state_error,
+                "sandbox_authority_audit_persisted": audit_error is None,
+                "sandbox_authority_audit_error": audit_error,
+                "reconciliation_required": True,
                 "sandbox_only": True,
                 "live_execution_authorized": False,
             }
-        )
+
+        try:
+            authority_audit_hash = await self.execution_manager.audit_logger.log(
+                {
+                    "event": "sandbox_money_authority_consumed",
+                    "proposal_id": proposal_id,
+                    "receipt_id": receipt_id,
+                    "idempotency_key": idempotency_key,
+                    "authority_state": ledger_state,
+                    "execution_order_id": result.get("order_id"),
+                    "reconciliation_required": result.get("reconciliation_required", False),
+                    "sandbox_only": True,
+                    "live_execution_authorized": False,
+                }
+            )
+        except Exception as exc:
+            return {
+                **result,
+                "sandbox_authority": "CONSUMED_AUDIT_DEGRADED",
+                "sandbox_authority_receipt_id": receipt_id,
+                "sandbox_authority_state": ledger_state,
+                "sandbox_authority_ledger_persisted": True,
+                "sandbox_authority_audit_persisted": False,
+                "sandbox_authority_audit_error": f"{type(exc).__name__}: {exc}",
+                "sandbox_only": True,
+                "live_execution_authorized": False,
+            }
+
         return {
             **result,
             "sandbox_authority": "CONSUMED",
             "sandbox_authority_receipt_id": receipt_id,
             "sandbox_authority_state": ledger_state,
+            "sandbox_authority_ledger_persisted": True,
+            "sandbox_authority_audit_persisted": True,
+            "sandbox_authority_audit_hash": authority_audit_hash,
             "sandbox_only": True,
             "live_execution_authorized": False,
         }
+
+    def _paper_broker_is_proved(self) -> tuple[bool, str]:
+        broker = self.execution_manager.broker
+        try:
+            paper_only = broker.is_paper_only()
+            proof = broker.paper_proof()
+        except Exception as exc:
+            return False, f"paper broker proof unavailable: {type(exc).__name__}: {exc}"
+        if paper_only is not True:
+            return False, "sandbox authority refuses a broker that is not paper-only"
+        if not isinstance(proof, dict):
+            return False, "sandbox authority requires structured paper broker proof"
+        if proof.get("configured_paper") is not True or proof.get("provably_paper") is not True:
+            return False, "sandbox authority requires configured and provable paper broker evidence"
+        return True, "paper broker proof verified"
 
     def _reserved_authority_still_active(
         self,
@@ -255,6 +336,13 @@ class SandboxMoneyExecutionManager:
         if reservation.get("state") != "reserved":
             return False, "sandbox authority reservation is not executable"
         return True, "reserved authority remains active"
+
+    def _best_effort_classify(self, idempotency_key: str, state: str) -> str | None:
+        try:
+            self.ledger.classify(idempotency_key, state)
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
+        return None
 
     async def _block(
         self,
