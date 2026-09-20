@@ -1,6 +1,16 @@
 # SleepWealth Repair Authority
 
-SleepWealth may self-repair its software, evidence, simulation, and connectivity surfaces. Repair authority never converts a failing test, MCP caller, fingerprint, proof cookie, model output, or provider observation into authority to move money or take a financial position.
+SleepWealth may self-repair its software, evidence, simulation, and connectivity surfaces. Repair authority never converts a failing test, MCP caller, fingerprint, proof cookie, model output, attack result, or provider observation into authority to move money or take a financial position.
+
+## Repair OS inheritance
+
+SleepWealth uses the portfolio fused repair loop:
+
+`LINDY → RED TEAM I → ATTACK TEN → OODA OBSERVE → OODA ORIENT → OODA DECIDE → L99 AUTHORITY → ACT → RED TEAM II → RECURSIVE HARDENING → VERIFY → LOOP/STOP`.
+
+Lindy prefers the durable existing carrier and lowest-coupling integration; Red Team I attacks whether the repair should exist; ATTACK TEN pressures provider/account targeting, stale evidence, hidden financial consequence, unsafe fallback, replay/idempotency weakness, rollback, user outcome, temporal races, and verification gaps; OODA reacquires repository/provider/account/resource state; L99 verifies exact subject, evidence, authority ceiling, financial consequence class, rollback, continuity, revocation, and kill-switch state before Act; Red Team II attacks the implementation; recursive hardening pressures authority inversion, evidence falsification, human outcome, and temporal races; Verify uses exact-head source tests, provider readback, simulation, and Playwright where applicable.
+
+Attack/Lindy/Red Team/OODA/L99 outputs may revise or block a repair. They never create human approval, eligible-adult proof, provider session authority, amount authority, signing authority, payment authority, trade authority, private-key access, or permission to move funds.
 
 ## Allowed repair authority
 
