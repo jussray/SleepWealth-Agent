@@ -82,8 +82,11 @@ def _signed_live_session(
         "observed_at": EVALUATED_AT.isoformat(),
         "execution_authorized": False,
         "order_submit_capability": False,
-        "observation_fingerprint": hashlib.sha256(b"provider-observation").hexdigest(),
     }
+    canonical = json.dumps(observation, sort_keys=True, separators=(",", ":"), default=str)
+    observation["observation_fingerprint"] = hashlib.sha256(
+        canonical.encode("utf-8")
+    ).hexdigest()
     return mint_provider_session_receipt(
         observation,
         issuer_id=SESSION_ISSUER,
@@ -298,6 +301,20 @@ def test_live_session_for_different_provider_is_conflict_not_green():
     )
     assert check["classification"] == "CONFLICT"
     assert "LIVE_BROKER_SESSION_RECEIPT" in receipt["blockers"]
+
+
+def test_live_session_without_adult_eligibility_is_unbound():
+    session = _signed_live_session()
+    receipt = _readiness(
+        live_session=session,
+        session_keys={SESSION_ISSUER: SESSION_KEY},
+    )
+    check = next(
+        item for item in receipt["checks"] if item["code"] == "LIVE_BROKER_SESSION_RECEIPT"
+    )
+    assert check["classification"] == "UNBOUND"
+    assert "LIVE_BROKER_SESSION_RECEIPT" in receipt["blockers"]
+    assert receipt["execution_authorized"] is False
 
 
 def test_hash_only_provider_claim_cannot_mint_adult_trust():
