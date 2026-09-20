@@ -20,16 +20,14 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from .provider_identity import provider_account_fingerprint
+
 ALPACA_LIVE_BASE_URL = "https://api.alpaca.markets"
 ACCOUNT_PATH = "/v2/account"
 
 
 class AlpacaReadOnlyObserverError(RuntimeError):
     """Raised when a live-account observation cannot be safely established."""
-
-
-def _fingerprint(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _payload_fingerprint(payload: dict[str, Any]) -> str:
@@ -113,7 +111,13 @@ class AlpacaReadOnlyObserver:
         if crypto_status == "ACTIVE" and not blocked:
             permissions.append("crypto")
 
-        stable_identity = f"alpaca|{account_id}|{account_number}"
+        account_fingerprint = provider_account_fingerprint(
+            "alpaca",
+            {
+                "account_id": account_id,
+                "account_number": account_number,
+            },
+        )
         safe_payload: dict[str, Any] = {
             "event": "provider_live_account_observed",
             "classification": "OBSERVED",
@@ -121,7 +125,7 @@ class AlpacaReadOnlyObserver:
             "environment": "live",
             "connected": True,
             "source_endpoint": f"GET {ACCOUNT_PATH}",
-            "account_fingerprint": _fingerprint(stable_identity),
+            "account_fingerprint": account_fingerprint,
             "account_status": status,
             "crypto_status": crypto_status,
             "account_blocked": account_blocked,
