@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from mcp.server import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from integrations.cash_app_pay import CashAppPayClient, CashAppPayConfig, CashAppPayCredentials
 from integrations.solana_rpc import SolanaRpcClient, SolanaRpcConfig
@@ -17,6 +18,10 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"required environment variable is missing: {name}")
     return value
+
+
+def _csv_env(name: str) -> list[str]:
+    return [value.strip() for value in os.getenv(name, "").split(",") if value.strip()]
 
 
 def build_dispatcher_from_env() -> ProviderDispatcher:
@@ -105,6 +110,21 @@ def build_server_from_env() -> MCPServer:
     return build_mcp_server(build_dispatcher_from_env())
 
 
+def _transport_security(host: str) -> TransportSecuritySettings | None:
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return None
+    allowed_hosts = _csv_env("SLEEPWEALTH_MCP_ALLOWED_HOSTS")
+    if not allowed_hosts:
+        raise RuntimeError(
+            "non-loopback MCP requires SLEEPWEALTH_MCP_ALLOWED_HOSTS for DNS-rebinding protection"
+        )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=_csv_env("SLEEPWEALTH_MCP_ALLOWED_ORIGINS"),
+    )
+
+
 def main() -> None:
     server = build_server_from_env()
     transport = os.getenv("SLEEPWEALTH_MCP_TRANSPORT", "stdio").strip().lower()
@@ -115,7 +135,13 @@ def main() -> None:
         raise RuntimeError("SLEEPWEALTH_MCP_TRANSPORT must be stdio or streamable-http")
     host = os.getenv("SLEEPWEALTH_MCP_HOST", "127.0.0.1").strip()
     port = int(os.getenv("SLEEPWEALTH_MCP_PORT", "8000"))
-    server.run("streamable-http", host=host, port=port, streamable_http_path="/mcp")
+    server.run(
+        "streamable-http",
+        host=host,
+        port=port,
+        streamable_http_path="/mcp",
+        transport_security=_transport_security(host),
+    )
 
 
 if __name__ == "__main__":
