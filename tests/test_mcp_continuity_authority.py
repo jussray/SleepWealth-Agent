@@ -25,6 +25,7 @@ def test_continuity_cookie_is_authenticated_but_never_authority():
         issuer_id="cookie-issuer",
         issuer_key=COOKIE_KEY,
         caller_fingerprint=FP_A,
+        subject_fingerprint=FP_D,
         provider="solana-rpc",
         provider_subject_fingerprint=FP_B,
         source_sha="a" * 40,
@@ -38,6 +39,8 @@ def test_continuity_cookie_is_authenticated_but_never_authority():
     )
     assert decision.accepted is True
     assert decision.classification == "VERIFIED_CONTINUITY"
+    assert decision.caller_fingerprint == FP_A
+    assert decision.subject_fingerprint == FP_D
     assert cookie["authorizes"] is False
     assert cookie["execution_authorized"] is False
     assert cookie["contains_secret"] is False
@@ -48,6 +51,7 @@ def test_forged_or_stale_continuity_cookie_fails_closed():
         issuer_id="cookie-issuer",
         issuer_key=COOKIE_KEY,
         caller_fingerprint=FP_A,
+        subject_fingerprint=FP_D,
         provider="cash-app-pay",
         provider_subject_fingerprint=FP_B,
         source_sha="b" * 40,
@@ -66,6 +70,7 @@ def test_forged_or_stale_continuity_cookie_fails_closed():
         issuer_id="cookie-issuer",
         issuer_key=COOKIE_KEY,
         caller_fingerprint=FP_A,
+        subject_fingerprint=FP_D,
         provider="cash-app-pay",
         provider_subject_fingerprint=FP_B,
         source_sha="b" * 40,
@@ -103,55 +108,44 @@ def _authority(**overrides):
     return issue_product_action_authority(**values)
 
 
-def test_product_authority_binds_exact_scope_and_amount():
+def _validate(receipt, **overrides):
+    values = {
+        "trusted_keys": {"authority-issuer": AUTHORITY_KEY},
+        "subject_fingerprint": FP_A,
+        "provider": "cash-app-pay",
+        "environment": "production",
+        "account_fingerprint": FP_B,
+        "action": "create-payment",
+        "resource_fingerprint": FP_C,
+        "idempotency_key": "idem-1",
+        "requested_amount": 24.99,
+        "currency": "USD",
+    }
+    values.update(overrides)
+    return validate_product_action_authority(receipt, **values)
+
+
+def test_product_authority_binds_exact_subject_scope_and_amount():
     receipt = _authority()
-    decision = validate_product_action_authority(
-        receipt,
-        trusted_keys={"authority-issuer": AUTHORITY_KEY},
-        provider="cash-app-pay",
-        environment="production",
-        account_fingerprint=FP_B,
-        action="create-payment",
-        resource_fingerprint=FP_C,
-        idempotency_key="idem-1",
-        requested_amount=24.99,
-        currency="USD",
-    )
+    decision = _validate(receipt)
     assert decision.accepted is True
+    assert decision.subject_fingerprint == FP_A
     assert receipt["eligible_adult_required"] is True
     assert receipt["provider_permission_required"] is True
     assert receipt["human_approval_required"] is True
     assert receipt["credential_material_included"] is False
 
-    exceeded = validate_product_action_authority(
-        receipt,
-        trusted_keys={"authority-issuer": AUTHORITY_KEY},
-        provider="cash-app-pay",
-        environment="production",
-        account_fingerprint=FP_B,
-        action="create-payment",
-        resource_fingerprint=FP_C,
-        idempotency_key="idem-1",
-        requested_amount=25.01,
-        currency="USD",
-    )
+    exceeded = _validate(receipt, requested_amount=25.01)
     assert exceeded.accepted is False
     assert exceeded.classification == "AMOUNT_EXCEEDED"
 
-    drifted = validate_product_action_authority(
-        receipt,
-        trusted_keys={"authority-issuer": AUTHORITY_KEY},
-        provider="cash-app-pay",
-        environment="production",
-        account_fingerprint=FP_B,
-        action="create-payment",
-        resource_fingerprint="f" * 64,
-        idempotency_key="idem-1",
-        requested_amount=24.99,
-        currency="USD",
-    )
-    assert drifted.accepted is False
-    assert drifted.classification == "SCOPE_CONFLICT"
+    drifted_resource = _validate(receipt, resource_fingerprint="f" * 64)
+    assert drifted_resource.accepted is False
+    assert drifted_resource.classification == "SCOPE_CONFLICT"
+
+    drifted_subject = _validate(receipt, subject_fingerprint="e" * 64)
+    assert drifted_subject.accepted is False
+    assert drifted_subject.classification == "SCOPE_CONFLICT"
 
 
 def test_action_ledger_blocks_replay_revocation_and_kill_switch(tmp_path):
