@@ -98,4 +98,8 @@ Required MCP control-plane variables:
 
 Optional provider variables configure Solana RPC and Cash App Pay. Secrets must be supplied by deployment secret storage. Never commit provider secrets or private keys.
 
-The server defaults to MCP stdio. `SLEEPWEALTH_MCP_TRANSPORT=streamable-http` exposes `/mcp`; the default host remains loopback so remote deployment must explicitly configure its network/authentication boundary instead of silently opening the server.
+The server defaults to MCP stdio. `SLEEPWEALTH_MCP_TRANSPORT=streamable-http` exposes `/mcp`.
+
+Loopback HTTP uses the SDK's safe local default. A non-loopback host fails closed unless `SLEEPWEALTH_MCP_ALLOWED_HOSTS` is explicitly configured as a comma-separated allowlist. `SLEEPWEALTH_MCP_ALLOWED_ORIGINS` may additionally bind accepted browser/application origins. These are transport-level DNS-rebinding/origin protections, not substitutes for deployment authentication.
+
+A remote deployment must also sit behind a real authenticated identity boundary, such as the MCP SDK's bearer-token/OAuth resource-server integration with the deployment's actual identity provider. This repository does not invent or self-issue that external identity provider.
