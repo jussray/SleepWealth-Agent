@@ -10,6 +10,7 @@ from authority.money_movement import (
     SandboxMoneyAction,
     validate_sandbox_money_authority,
 )
+from broker.provider_identity import provider_account_fingerprint
 from execution.executor import ExecutionManager
 
 
@@ -312,7 +313,19 @@ class SandboxMoneyExecutionManager:
             return False, "sandbox authority requires structured paper broker proof"
         if proof.get("configured_paper") is not True or proof.get("provably_paper") is not True:
             return False, "sandbox authority requires configured and provable paper broker evidence"
-        return True, "paper broker proof verified"
+        accounts = proof.get("managed_accounts")
+        if not isinstance(accounts, list) or len(accounts) != 1 or not str(accounts[0]).strip():
+            return False, "sandbox authority requires exactly one proved paper account"
+        try:
+            observed_account_fingerprint = provider_account_fingerprint(
+                self.provider,
+                {"account_id": accounts[0]},
+            )
+        except ValueError as exc:
+            return False, f"paper account identity is invalid: {exc}"
+        if observed_account_fingerprint != self.account_fingerprint:
+            return False, "sandbox runtime account fingerprint does not match broker paper proof"
+        return True, "paper broker and account proof verified"
 
     def _reserved_authority_still_active(
         self,
