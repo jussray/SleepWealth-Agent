@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from broker.base import Order
+from market.investor_lens import build_investor_lens_policy_receipt
 from portfolio.models import AccountState
 
 
@@ -14,6 +15,7 @@ class ProposalEvaluator:
         self.symbol_scope = str(rules.get("symbol_scope", "approved")).strip().lower()
         self.max_position_size = rules.get("max_position_size", 1000.0)
         self.ceiling = rules.get("ceiling", {}).get("current", 5.0)
+        self.investor_lens = build_investor_lens_policy_receipt()
 
     def evaluate(self, order: Order, account: AccountState, price: float) -> dict:
         reasons: list[str] = []
@@ -55,5 +57,6 @@ class ProposalEvaluator:
             "ceiling": self.ceiling,
             "max_position_size": self.max_position_size,
             "floor_cash": self.floor_cash,
+            "investor_lens": self.investor_lens,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
