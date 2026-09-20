@@ -3,14 +3,17 @@ import json
 import pytest
 
 from broker.alpaca_readonly import AlpacaReadOnlyObserver, AlpacaReadOnlyObserverError
+from broker.provider_identity import provider_account_fingerprint
 
 TOKEN = "test-token-that-must-never-appear-in-receipts"
+ACCOUNT_ID = "e6fe16f3-64a4-4921-8928-cadf02f92f98"
+ACCOUNT_NUMBER = "010203ABCD"
 
 
 def _active_account():
     return {
-        "id": "e6fe16f3-64a4-4921-8928-cadf02f92f98",
-        "account_number": "010203ABCD",
+        "id": ACCOUNT_ID,
+        "account_number": ACCOUNT_NUMBER,
         "status": "ACTIVE",
         "crypto_status": "ACTIVE",
         "account_blocked": False,
@@ -39,13 +42,16 @@ async def test_alpaca_observer_returns_safe_live_account_capabilities():
     assert receipt["asset_permissions"] == ["stock-market", "crypto"]
     assert receipt["execution_authorized"] is False
     assert receipt["order_submit_capability"] is False
-    assert len(receipt["account_fingerprint"]) == 64
+    assert receipt["account_fingerprint"] == provider_account_fingerprint(
+        "alpaca",
+        {"account_id": ACCOUNT_ID, "account_number": ACCOUNT_NUMBER},
+    )
     assert len(receipt["observation_fingerprint"]) == 64
 
     serialized = json.dumps(receipt)
     assert TOKEN not in serialized
-    assert "010203ABCD" not in serialized
-    assert "e6fe16f3-64a4-4921-8928-cadf02f92f98" not in serialized
+    assert ACCOUNT_NUMBER not in serialized
+    assert ACCOUNT_ID not in serialized
 
 
 @pytest.mark.asyncio
