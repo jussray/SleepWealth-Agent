@@ -238,12 +238,27 @@ def validate_provider_session_receipt(
             "reason": "live provider session receipt is expired or outside the trusted freshness window",
         }
 
+    if not permissions:
+        return {
+            "classification": "BLOCKED_ACCOUNT",
+            "accepted": False,
+            "reason": (
+                "live provider/account session is authentic and fresh but exposes no enabled "
+                "stock-market or crypto trading permission"
+            ),
+            "provider": receipt["provider"],
+            "account_fingerprint": receipt["account_fingerprint"],
+            "asset_permissions": [],
+            "expires_at": receipt["expires_at"],
+            "fingerprint": receipt["fingerprint"],
+        }
+
     return {
         "classification": "VERIFIED_LIVE_SESSION",
         "accepted": True,
         "reason": (
-            "trusted runtime recently observed this live provider/account session; "
-            "no execution authority is granted"
+            "trusted runtime recently observed this live provider/account session with at least "
+            "one enabled market permission; no execution authority is granted"
         ),
         "provider": receipt["provider"],
         "account_fingerprint": receipt["account_fingerprint"],
