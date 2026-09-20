@@ -28,6 +28,7 @@ from typing import Iterable, Mapping
 from authority.runtime import EffectClass
 from broker.factory import KNOWN_BROKERS
 from execution.modes import LIVE_MODE, get_execution_mode
+from gate.provider_session import validate_provider_session_receipt
 
 MIN_RECEIPT_KEY_BYTES = 32
 MAX_ELIGIBILITY_TTL_SECONDS = 24 * 60 * 60
@@ -273,14 +274,17 @@ def _broker_eligibility_evidence(
 def live_money_readiness(
     external_observer_receipt: Mapping[str, object] | None = None,
     broker_eligibility_receipt: Mapping[str, object] | None = None,
+    live_provider_session_receipt: Mapping[str, object] | None = None,
     *,
     trusted_eligibility_keys: Mapping[str, object] | None = None,
+    trusted_session_keys: Mapping[str, object] | None = None,
     evaluated_at: datetime | None = None,
 ) -> dict[str, object]:
     """Return a fail-closed readiness receipt derived from executable repo truth.
 
     Evidence/fingerprints are continuity markers only; they never create or
-    renew trading authority.
+    renew trading authority. Adult eligibility and live provider-session proof
+    must independently authenticate and then bind to the same provider/account.
     """
 
     live_mode = get_execution_mode(LIVE_MODE)
@@ -290,7 +294,6 @@ def live_money_readiness(
     )
     external_brokers = tuple(name for name in KNOWN_BROKERS if name != "mock")
     observer = _observer_evidence(external_observer_receipt)
-    observer_seen = observer.get("classification") == "VERIFIED_OBSERVATION"
     eligibility = _broker_eligibility_evidence(
         broker_eligibility_receipt,
         trusted_eligibility_keys=trusted_eligibility_keys,
@@ -299,6 +302,51 @@ def live_money_readiness(
     adult_account_verified = (
         eligibility.get("classification") == "VERIFIED_ELIGIBLE_ADULT_ACCOUNT"
     )
+    session = validate_provider_session_receipt(
+        live_provider_session_receipt,
+        trusted_keys=trusted_session_keys,
+        evaluated_at=evaluated_at,
+    )
+    session_verified = session.get("classification") == "VERIFIED_LIVE_SESSION"
+    session_provider_matches = (
+        session_verified
+        and adult_account_verified
+        and session.get("provider") == eligibility.get("broker")
+    )
+    session_account_matches = (
+        session_verified
+        and adult_account_verified
+        and session.get("account_fingerprint") == eligibility.get("account_fingerprint")
+    )
+    live_session_bound = session_provider_matches and session_account_matches
+
+    if live_session_bound:
+        live_session_classification = "VERIFIED"
+        live_session_reason = (
+            "trusted live provider session matches the verified adult provider/account fingerprint"
+        )
+    elif session_verified and adult_account_verified:
+        live_session_classification = "CONFLICT"
+        live_session_reason = (
+            "live provider session and adult eligibility are both valid but identify different "
+            "provider/account subjects"
+        )
+    elif session_verified:
+        live_session_classification = "UNBOUND"
+        live_session_reason = (
+            "live provider session is verified but cannot bind to a verified adult account"
+        )
+    else:
+        live_session_classification = str(session.get("classification", "UNKNOWN"))
+        live_session_reason = str(session.get("reason", "live provider session is unavailable"))
+        if (
+            live_session_classification == "UNKNOWN"
+            and observer.get("classification") == "VERIFIED_OBSERVATION"
+        ):
+            live_session_reason = (
+                "a read-only IBKR session was observed, but no authenticated provider-session "
+                "receipt is bound to the verified adult account"
+            )
 
     checks = (
         ReadinessCheck(
@@ -354,15 +402,9 @@ def live_money_readiness(
         ),
         ReadinessCheck(
             code="LIVE_BROKER_SESSION_RECEIPT",
-            classification="UNKNOWN",
-            reason=(
-                "a read-only IBKR session was observed, but observation is not proof of an "
-                "authorized live execution session"
-                if observer_seen
-                else "no independently verified live brokerage/account session receipt is bound "
-                "to this runtime"
-            ),
-            source="external-runtime-evidence",
+            classification=live_session_classification,
+            reason=live_session_reason,
+            source="provider-session-authority",
         ),
     )
 
@@ -376,6 +418,7 @@ def live_money_readiness(
         "blockers": [check.code for check in checks if check.classification != "VERIFIED"],
         "external_readonly_observer": observer,
         "broker_eligibility": eligibility,
+        "live_provider_session": session,
         "fingerprint": _fingerprint(checks),
         "truth": (
             "This receipt describes current state only. It never grants, renews, or "
