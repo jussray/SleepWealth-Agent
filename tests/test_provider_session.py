@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +38,18 @@ def _observation(**overrides):
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     payload["observation_fingerprint"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return payload
+
+
+def _resign(receipt):
+    body = dict(receipt)
+    body.pop("fingerprint", None)
+    body.pop("receipt_auth", None)
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode(
+        "utf-8"
+    )
+    receipt["fingerprint"] = hashlib.sha256(canonical).hexdigest()
+    receipt["receipt_auth"] = hmac.new(KEY, canonical, hashlib.sha256).hexdigest()
+    return receipt
 
 
 def test_minted_provider_session_is_authenticated_but_non_authorizing():
@@ -84,6 +97,45 @@ def test_authentic_session_with_no_enabled_market_permission_is_blocked():
     assert result["classification"] == "BLOCKED_ACCOUNT"
     assert result["accepted"] is False
     assert result["asset_permissions"] == []
+
+
+def test_signer_rejects_blocked_observation_with_nonempty_permissions():
+    with pytest.raises(ValueError):
+        mint_provider_session_receipt(
+            _observation(trading_blocked=True),
+            issuer_id=ISSUER,
+            receipt_key=KEY,
+            issued_at=NOW,
+        )
+
+
+def test_validator_blocks_authenticated_contradictory_legacy_receipt():
+    receipt = mint_provider_session_receipt(
+        _observation(), issuer_id=ISSUER, receipt_key=KEY, issued_at=NOW
+    )
+    receipt["trading_blocked"] = True
+    _resign(receipt)
+
+    result = validate_provider_session_receipt(
+        receipt,
+        trusted_keys={ISSUER: KEY},
+        evaluated_at=NOW + timedelta(seconds=30),
+    )
+
+    assert result["classification"] == "BLOCKED_ACCOUNT"
+    assert result["accepted"] is False
+
+
+def test_signer_rejects_replayed_old_observation():
+    old_observation = _observation(observed_at=(NOW - timedelta(hours=1)).isoformat())
+
+    with pytest.raises(ValueError, match="stale"):
+        mint_provider_session_receipt(
+            old_observation,
+            issuer_id=ISSUER,
+            receipt_key=KEY,
+            issued_at=NOW,
+        )
 
 
 def test_forged_or_unknown_issuer_session_is_untrusted():
