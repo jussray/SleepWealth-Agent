@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -12,7 +13,6 @@ KEY = b"sleepwealth-provider-session-test-key-32bytes"
 ISSUER = "sleepwealth-runtime"
 NOW = datetime(2026, 9, 20, 5, 0, tzinfo=timezone.utc)
 ACCOUNT_FP = hashlib.sha256(b"alpaca-account-1").hexdigest()
-OBS_FP = hashlib.sha256(b"observation-1").hexdigest()
 
 
 def _observation(**overrides):
@@ -32,9 +32,10 @@ def _observation(**overrides):
         "observed_at": NOW.isoformat(),
         "execution_authorized": False,
         "order_submit_capability": False,
-        "observation_fingerprint": OBS_FP,
     }
     payload.update(overrides)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    payload["observation_fingerprint"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return payload
 
 
@@ -98,6 +99,19 @@ def test_expired_session_is_stale():
     )
     assert result["classification"] == "STALE"
     assert result["accepted"] is False
+
+
+def test_signer_rejects_corrupted_observation_fingerprint():
+    observation = _observation()
+    observation["account_status"] = "LIMITED"
+
+    with pytest.raises(ValueError):
+        mint_provider_session_receipt(
+            observation,
+            issuer_id=ISSUER,
+            receipt_key=KEY,
+            issued_at=NOW,
+        )
 
 
 def test_receipt_rejects_execution_authority_or_unknown_asset_lane():
