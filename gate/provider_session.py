@@ -17,8 +17,10 @@ from typing import Mapping
 
 MIN_RECEIPT_KEY_BYTES = 32
 MAX_SESSION_TTL_SECONDS = 10 * 60
+MAX_OBSERVATION_AGE_SECONDS = 5 * 60
 MAX_CLOCK_SKEW_SECONDS = 5 * 60
 ALLOWED_ASSET_PERMISSIONS = frozenset({"stock-market", "crypto"})
+BLOCK_FLAGS = ("account_blocked", "trading_blocked", "trade_suspended_by_user")
 
 
 def _canonical(payload: Mapping[str, object]) -> bytes:
@@ -80,6 +82,14 @@ def _utc(value: datetime | None = None) -> datetime:
     return current.astimezone(timezone.utc)
 
 
+def _block_flags_are_booleans(payload: Mapping[str, object]) -> bool:
+    return all(isinstance(payload.get(name), bool) for name in BLOCK_FLAGS)
+
+
+def _account_is_blocked(payload: Mapping[str, object]) -> bool:
+    return any(payload.get(name) is True for name in BLOCK_FLAGS)
+
+
 def _observation_fingerprint_matches(observation: Mapping[str, object]) -> bool:
     supplied = observation.get("observation_fingerprint")
     if not _sha256(supplied):
@@ -103,6 +113,8 @@ def _observation_ok(observation: Mapping[str, object]) -> bool:
         and isinstance(permissions, list)
         and len(permissions) == len(set(permissions))
         and all(item in ALLOWED_ASSET_PERMISSIONS for item in permissions)
+        and _block_flags_are_booleans(observation)
+        and not (_account_is_blocked(observation) and bool(permissions))
         and _observation_fingerprint_matches(observation)
         and _time(observation.get("observed_at")) is not None
     )
@@ -129,6 +141,17 @@ def mint_provider_session_receipt(
         raise ValueError(f"session receipt ttl must be 1..{MAX_SESSION_TTL_SECONDS} seconds")
 
     now = _utc(issued_at)
+    observed_at = _time(observation.get("observed_at"))
+    if observed_at is None:
+        raise ValueError("provider observation timestamp is invalid")
+    observed = observed_at.astimezone(timezone.utc)
+    if not (
+        now - timedelta(seconds=MAX_OBSERVATION_AGE_SECONDS)
+        <= observed
+        <= now + timedelta(seconds=MAX_CLOCK_SKEW_SECONDS)
+    ):
+        raise ValueError("provider observation is stale or too far in the future")
+
     expires = now + timedelta(seconds=int(ttl_seconds))
     receipt: dict[str, object] = {
         "schema": "sleepwealth-provider-session-v1",
@@ -190,6 +213,7 @@ def validate_provider_session_receipt(
         and isinstance(permissions, list)
         and len(permissions) == len(set(permissions))
         and all(item in ALLOWED_ASSET_PERMISSIONS for item in permissions)
+        and _block_flags_are_booleans(receipt)
         and _sha256(receipt.get("fingerprint"))
         and hashlib.sha256(_canonical(receipt)).hexdigest() == str(receipt.get("fingerprint"))
     )
@@ -227,7 +251,9 @@ def validate_provider_session_receipt(
         ttl = (expires - issued).total_seconds()
         freshness_ok = (
             0 < ttl <= MAX_SESSION_TTL_SECONDS
-            and observed <= issued + timedelta(seconds=MAX_CLOCK_SKEW_SECONDS)
+            and issued - timedelta(seconds=MAX_OBSERVATION_AGE_SECONDS)
+            <= observed
+            <= issued + timedelta(seconds=MAX_CLOCK_SKEW_SECONDS)
             and issued <= now + timedelta(seconds=MAX_CLOCK_SKEW_SECONDS)
             and now <= expires
         )
@@ -235,20 +261,20 @@ def validate_provider_session_receipt(
         return {
             "classification": "STALE",
             "accepted": False,
-            "reason": "live provider session receipt is expired or outside the trusted freshness window",
+            "reason": "live provider session or its underlying observation is outside the trusted freshness window",
         }
 
-    if not permissions:
+    if _account_is_blocked(receipt) or not permissions:
         return {
             "classification": "BLOCKED_ACCOUNT",
             "accepted": False,
             "reason": (
-                "live provider/account session is authentic and fresh but exposes no enabled "
-                "stock-market or crypto trading permission"
+                "live provider/account session is authentic and fresh but the account is blocked, "
+                "suspended, or exposes no enabled stock-market/crypto permission"
             ),
             "provider": receipt["provider"],
             "account_fingerprint": receipt["account_fingerprint"],
-            "asset_permissions": [],
+            "asset_permissions": list(permissions),
             "expires_at": receipt["expires_at"],
             "fingerprint": receipt["fingerprint"],
         }
