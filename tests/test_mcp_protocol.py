@@ -24,8 +24,8 @@ def _dispatcher(tmp_path) -> ProviderDispatcher:
 async def test_real_mcp_protocol_round_trip_lists_and_calls_capabilities(tmp_path):
     server = build_mcp_server(_dispatcher(tmp_path))
     async with Client(server) as client:
-        tools = await client.list_tools()
-        names = {tool.name for tool in tools}
+        listed = await client.list_tools()
+        names = {tool.name for tool in listed.tools}
         assert names == {
             "sleepwealth_capabilities",
             "sleepwealth_validate_continuity",
@@ -34,6 +34,7 @@ async def test_real_mcp_protocol_round_trip_lists_and_calls_capabilities(tmp_pat
         result = await client.call_tool("sleepwealth_capabilities", {})
 
     payload = result.structured_content
+    assert payload is not None
     assert payload["event"] == "mcp_provider_capabilities"
     assert payload["source_sha"] == SOURCE_SHA
     assert payload["authority_issuance_exposed_over_mcp"] is False
