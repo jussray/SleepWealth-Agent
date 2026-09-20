@@ -10,6 +10,8 @@ import httpx
 
 from broker.provider_identity import provider_account_fingerprint
 
+USER_AGENT = "SleepWealth-Agent/0.1"
+
 
 @dataclass(frozen=True, slots=True)
 class CashAppPayCredentials:
@@ -19,7 +21,10 @@ class CashAppPayCredentials:
     region: str
 
     def __post_init__(self) -> None:
-        if not all(str(value or "").strip() for value in (self.client_id, self.key_id, self.secret, self.region)):
+        if not all(
+            str(value or "").strip()
+            for value in (self.client_id, self.key_id, self.secret, self.region)
+        ):
             raise ValueError("Cash App Pay client_id, key_id, secret, and region are required")
         if len(self.secret.encode("utf-8")) < 32:
             raise ValueError("Cash App Pay secret must be at least 32 bytes")
@@ -102,6 +107,7 @@ class CashAppPayClient:
             "Authorization": authorization,
             "Content-Type": "application/json",
             "Host": host,
+            "User-Agent": USER_AGENT,
             "X-Region": creds.region,
             "X-Signature": f"V1 {signature}",
         }
@@ -120,6 +126,7 @@ class CashAppPayClient:
             else b""
         )
         request_headers = dict(headers or {})
+        request_headers.setdefault("User-Agent", USER_AGENT)
         url = f"{self.config.base_url}{path}"
         if self._client is not None:
             response = await self._client.request(
@@ -155,13 +162,16 @@ class CashAppPayClient:
     ) -> dict[str, object]:
         if amount_cents <= 0:
             raise ValueError("amount_cents must be positive")
-        if not all(str(value or "").strip() for value in (
-            client_id,
-            merchant_id,
-            reference_id,
-            redirect_url,
-            idempotency_key,
-        )):
+        if not all(
+            str(value or "").strip()
+            for value in (
+                client_id,
+                merchant_id,
+                reference_id,
+                redirect_url,
+                idempotency_key,
+            )
+        ):
             raise ValueError("customer request fields must not be empty")
         path = "/customer-request/v1/requests"
         body = {
@@ -188,6 +198,7 @@ class CashAppPayClient:
                 "Accept": "application/json",
                 "Authorization": f"Client {client_id}",
                 "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
             },
         )
         return {
@@ -210,12 +221,15 @@ class CashAppPayClient:
     ) -> dict[str, object]:
         if amount_cents <= 0:
             raise ValueError("amount_cents must be positive")
-        if not all(str(value or "").strip() for value in (
-            merchant_id,
-            grant_id,
-            reference_id,
-            idempotency_key,
-        )):
+        if not all(
+            str(value or "").strip()
+            for value in (
+                merchant_id,
+                grant_id,
+                reference_id,
+                idempotency_key,
+            )
+        ):
             raise ValueError("payment fields must not be empty")
         path = "/network/v1/payments"
         body = {
