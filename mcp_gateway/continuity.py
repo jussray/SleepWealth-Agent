@@ -62,6 +62,8 @@ class ContinuityDecision:
     classification: str
     reason: str
     fingerprint: str | None = None
+    caller_fingerprint: str | None = None
+    subject_fingerprint: str | None = None
     provider: str | None = None
     environment: str | None = None
     provider_subject_fingerprint: str | None = None
@@ -72,6 +74,8 @@ class ContinuityDecision:
             "classification": self.classification,
             "reason": self.reason,
             "fingerprint": self.fingerprint,
+            "caller_fingerprint": self.caller_fingerprint,
+            "subject_fingerprint": self.subject_fingerprint,
             "provider": self.provider,
             "environment": self.environment,
             "provider_subject_fingerprint": self.provider_subject_fingerprint,
@@ -85,6 +89,7 @@ def issue_continuity_cookie(
     issuer_id: str,
     issuer_key: str | bytes,
     caller_fingerprint: str,
+    subject_fingerprint: str,
     provider: str,
     provider_subject_fingerprint: str,
     source_sha: str,
@@ -96,21 +101,25 @@ def issue_continuity_cookie(
 ) -> dict[str, object]:
     """Issue a short-lived non-authorizing continuity cookie.
 
-    The cookie answers only "is this the same caller/provider/account/source
-    context we observed recently?" It is never a credential or money-moving
-    grant, even though it is authenticated against tampering.
+    The cookie answers only whether this caller, human subject, provider account,
+    source build, and capability set match a recently authenticated context. It
+    is never a credential or money-moving grant, even though it is authenticated
+    against tampering.
     """
 
     key = _key(issuer_key)
     if not issuer_id.strip() or not key:
         raise ValueError("continuity issuer id and a 32+ byte key are required")
-    if not (_valid_sha256(caller_fingerprint) and _valid_sha256(provider_subject_fingerprint)):
-        raise ValueError("caller and provider-subject fingerprints must be SHA-256 values")
+    fingerprints = (caller_fingerprint, subject_fingerprint, provider_subject_fingerprint)
+    if not all(_valid_sha256(value) for value in fingerprints):
+        raise ValueError("caller, subject, and provider-subject fingerprints must be SHA-256 values")
     if not isinstance(source_sha, str) or len(source_sha) < 7:
         raise ValueError("source_sha is required")
     if not provider.strip() or not environment.strip():
         raise ValueError("provider and environment are required")
-    normalized_caps = tuple(sorted({str(value).strip() for value in capabilities if str(value).strip()}))
+    normalized_caps = tuple(
+        sorted({str(value).strip() for value in capabilities if str(value).strip()})
+    )
     if not normalized_caps:
         raise ValueError("at least one capability is required")
     if authority_fingerprint is not None and not _valid_sha256(authority_fingerprint):
@@ -128,6 +137,7 @@ def issue_continuity_cookie(
         "classification": "CONTINUITY_ONLY",
         "issuer_id": issuer_id.strip(),
         "caller_fingerprint": caller_fingerprint.lower(),
+        "subject_fingerprint": subject_fingerprint.lower(),
         "provider": provider.strip().lower(),
         "provider_subject_fingerprint": provider_subject_fingerprint.lower(),
         "source_sha": source_sha.strip(),
@@ -154,9 +164,11 @@ def validate_continuity_cookie(
     if cookie is None:
         return ContinuityDecision(False, "MISSING", "continuity cookie is required")
 
+    caller_fp = str(cookie.get("caller_fingerprint", "")) or None
+    human_fp = str(cookie.get("subject_fingerprint", "")) or None
     provider = str(cookie.get("provider", "")) or None
     environment = str(cookie.get("environment", "")) or None
-    subject_fp = str(cookie.get("provider_subject_fingerprint", "")) or None
+    provider_fp = str(cookie.get("provider_subject_fingerprint", "")) or None
     supplied_fp = cookie.get("fingerprint")
     capabilities = cookie.get("capabilities")
 
@@ -169,8 +181,9 @@ def validate_continuity_cookie(
         and cookie.get("contains_secret") is False
         and isinstance(cookie.get("issuer_id"), str)
         and bool(str(cookie.get("issuer_id", "")).strip())
-        and _valid_sha256(cookie.get("caller_fingerprint"))
-        and _valid_sha256(subject_fp)
+        and _valid_sha256(caller_fp)
+        and _valid_sha256(human_fp)
+        and _valid_sha256(provider_fp)
         and isinstance(provider, str)
         and bool(provider.strip())
         and isinstance(environment, str)
@@ -181,7 +194,10 @@ def validate_continuity_cookie(
         and bool(capabilities)
         and len(capabilities) == len(set(str(value) for value in capabilities))
         and all(isinstance(value, str) and value.strip() for value in capabilities)
-        and (cookie.get("authority_fingerprint") is None or _valid_sha256(cookie.get("authority_fingerprint")))
+        and (
+            cookie.get("authority_fingerprint") is None
+            or _valid_sha256(cookie.get("authority_fingerprint"))
+        )
         and _valid_sha256(supplied_fp)
         and hmac.compare_digest(
             str(supplied_fp).lower(),
@@ -223,7 +239,9 @@ def validate_continuity_cookie(
         "VERIFIED_CONTINUITY",
         "authenticated continuity marker is current; it grants no execution authority",
         fingerprint=str(supplied_fp).lower(),
+        caller_fingerprint=caller_fp,
+        subject_fingerprint=human_fp,
         provider=provider,
         environment=environment,
-        provider_subject_fingerprint=subject_fp,
+        provider_subject_fingerprint=provider_fp,
     )
