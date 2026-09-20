@@ -4,10 +4,14 @@ import json
 from datetime import datetime, timezone
 
 from gate.live_money_readiness import live_money_readiness
+from gate.provider_session import mint_provider_session_receipt
 
 ELIGIBILITY_KEY = b"sleepwealth-test-eligibility-key-32-bytes!!"
 ELIGIBILITY_ISSUER = "test-broker-control-plane"
+SESSION_KEY = b"sleepwealth-test-provider-session-key-32bytes"
+SESSION_ISSUER = "test-sleepwealth-runtime"
 EVALUATED_AT = datetime(2026, 9, 20, 4, 0, tzinfo=timezone.utc)
+DEFAULT_ACCOUNT_FP = hashlib.sha256(b"provider-account-123").hexdigest()
 
 
 def _canonical_payload(payload: dict) -> bytes:
@@ -37,7 +41,7 @@ def _signed_adult_eligibility_receipt(**overrides) -> dict:
         "source": "broker-provider",
         "issuer_id": ELIGIBILITY_ISSUER,
         "broker": "eligible-provider",
-        "account_fingerprint": hashlib.sha256(b"provider-account-123").hexdigest(),
+        "account_fingerprint": DEFAULT_ACCOUNT_FP,
         "account_holder_age_verified": True,
         "minimum_age": 18,
         "trading_enabled": True,
@@ -56,10 +60,51 @@ def _signed_adult_eligibility_receipt(**overrides) -> dict:
     return receipt
 
 
-def _readiness(receipt=None, *, keys=None, evaluated_at=EVALUATED_AT):
+def _signed_live_session(
+    *,
+    provider="alpaca",
+    account_fingerprint=DEFAULT_ACCOUNT_FP,
+    permissions=None,
+):
+    observation = {
+        "event": "provider_live_account_observed",
+        "classification": "OBSERVED",
+        "provider": provider,
+        "environment": "live",
+        "connected": True,
+        "account_fingerprint": account_fingerprint,
+        "account_status": "ACTIVE",
+        "crypto_status": "ACTIVE",
+        "account_blocked": False,
+        "trading_blocked": False,
+        "trade_suspended_by_user": False,
+        "asset_permissions": permissions or ["stock-market", "crypto"],
+        "observed_at": EVALUATED_AT.isoformat(),
+        "execution_authorized": False,
+        "order_submit_capability": False,
+        "observation_fingerprint": hashlib.sha256(b"provider-observation").hexdigest(),
+    }
+    return mint_provider_session_receipt(
+        observation,
+        issuer_id=SESSION_ISSUER,
+        receipt_key=SESSION_KEY,
+        issued_at=EVALUATED_AT,
+    )
+
+
+def _readiness(
+    receipt=None,
+    *,
+    keys=None,
+    live_session=None,
+    session_keys=None,
+    evaluated_at=EVALUATED_AT,
+):
     return live_money_readiness(
         broker_eligibility_receipt=receipt,
+        live_provider_session_receipt=live_session,
         trusted_eligibility_keys=keys,
+        trusted_session_keys=session_keys,
         evaluated_at=evaluated_at,
     )
 
@@ -73,6 +118,7 @@ def test_live_money_readiness_fails_closed_with_separate_receipts():
     assert len(receipt["fingerprint"]) == 64
     assert receipt["external_readonly_observer"]["classification"] == "UNKNOWN"
     assert receipt["broker_eligibility"]["classification"] == "UNKNOWN"
+    assert receipt["live_provider_session"]["classification"] == "UNKNOWN"
 
     checks = receipt["checks"]
     codes = [check["code"] for check in checks]
@@ -171,7 +217,87 @@ def test_trusted_provider_verified_18_plus_account_clears_only_eligibility_gates
     assert receipt["ready"] is False
     assert "ADULT_ACCOUNT_ELIGIBILITY" not in receipt["blockers"]
     assert "BROKER_ACCOUNT_ELIGIBILITY" not in receipt["blockers"]
+    assert "LIVE_BROKER_SESSION_RECEIPT" in receipt["blockers"]
+
+
+def test_same_provider_and_account_session_clears_only_live_session_gate():
+    eligibility = _signed_adult_eligibility_receipt(
+        broker="alpaca",
+        account_fingerprint=DEFAULT_ACCOUNT_FP,
+    )
+    session = _signed_live_session(
+        provider="alpaca",
+        account_fingerprint=DEFAULT_ACCOUNT_FP,
+    )
+
+    receipt = _readiness(
+        eligibility,
+        keys={ELIGIBILITY_ISSUER: ELIGIBILITY_KEY},
+        live_session=session,
+        session_keys={SESSION_ISSUER: SESSION_KEY},
+    )
+
+    classifications = {
+        check["code"]: check["classification"] for check in receipt["checks"]
+    }
+    assert classifications["ADULT_ACCOUNT_ELIGIBILITY"] == "VERIFIED"
+    assert classifications["BROKER_ACCOUNT_ELIGIBILITY"] == "VERIFIED"
+    assert classifications["LIVE_BROKER_SESSION_RECEIPT"] == "VERIFIED"
+    assert receipt["live_provider_session"]["classification"] == "VERIFIED_LIVE_SESSION"
+    assert "LIVE_BROKER_SESSION_RECEIPT" not in receipt["blockers"]
     assert "LIVE_EXECUTION_MODE" in receipt["blockers"]
+    assert "REAL_MONEY_EFFECT_CLASS" in receipt["blockers"]
+    assert "EXTERNAL_BROKER_ADAPTER" in receipt["blockers"]
+    assert receipt["ready"] is False
+    assert receipt["execution_authorized"] is False
+
+
+def test_live_session_for_different_account_is_conflict_not_green():
+    eligibility = _signed_adult_eligibility_receipt(
+        broker="alpaca",
+        account_fingerprint=DEFAULT_ACCOUNT_FP,
+    )
+    session = _signed_live_session(
+        provider="alpaca",
+        account_fingerprint=hashlib.sha256(b"different-account").hexdigest(),
+    )
+
+    receipt = _readiness(
+        eligibility,
+        keys={ELIGIBILITY_ISSUER: ELIGIBILITY_KEY},
+        live_session=session,
+        session_keys={SESSION_ISSUER: SESSION_KEY},
+    )
+    check = next(
+        item for item in receipt["checks"] if item["code"] == "LIVE_BROKER_SESSION_RECEIPT"
+    )
+    assert check["classification"] == "CONFLICT"
+    assert "different" in check["reason"]
+    assert "LIVE_BROKER_SESSION_RECEIPT" in receipt["blockers"]
+    assert receipt["execution_authorized"] is False
+
+
+def test_live_session_for_different_provider_is_conflict_not_green():
+    eligibility = _signed_adult_eligibility_receipt(
+        broker="alpaca",
+        account_fingerprint=DEFAULT_ACCOUNT_FP,
+    )
+    session = _signed_live_session(
+        provider="another-provider",
+        account_fingerprint=DEFAULT_ACCOUNT_FP,
+    )
+
+    receipt = _readiness(
+        eligibility,
+        keys={ELIGIBILITY_ISSUER: ELIGIBILITY_KEY},
+        live_session=session,
+        session_keys={SESSION_ISSUER: SESSION_KEY},
+    )
+    check = next(
+        item for item in receipt["checks"] if item["code"] == "LIVE_BROKER_SESSION_RECEIPT"
+    )
+    assert check["classification"] == "CONFLICT"
+    assert "LIVE_BROKER_SESSION_RECEIPT" in receipt["blockers"]
 
 
 def test_hash_only_provider_claim_cannot_mint_adult_trust():
