@@ -16,21 +16,28 @@ def test_mom8_public_identity_is_canonical() -> None:
     assert manifest["ticker"] == "MOM8"
     assert manifest["identity_type"] == "public-token-branding"
     assert manifest["target_surface"] == "pump.fun"
-    assert manifest["status"] == "approved-branding-only"
+    assert manifest["status"] == "capabilities-implemented-authority-gated"
 
 
-def test_branding_approval_cannot_expand_financial_authority() -> None:
+def test_crypto_capabilities_are_implemented() -> None:
+    capabilities = load_manifest()["capabilities"]
+
+    for name in ("launch", "mint", "wallet", "trade", "spend", "transfer"):
+        assert capabilities[name]["implemented"] is True
+        assert capabilities[name]["mode"] == "sandbox"
+        assert capabilities[name]["implementation"].startswith(
+            "broker.crypto_sandbox.CryptoSandboxBroker."
+        )
+
+
+def test_implemented_capabilities_do_not_self_grant_live_authority() -> None:
     manifest = load_manifest()
     authority = manifest["authority"]
 
     assert manifest["paper_only"] is True
     assert authority["branding"] is True
-    assert authority["launch"] is False
-    assert authority["mint"] is False
-    assert authority["wallet"] is False
-    assert authority["trade"] is False
-    assert authority["spend"] is False
-    assert authority["transfer"] is False
+    for gated in ("launch", "mint", "wallet", "trade", "spend", "transfer"):
+        assert authority[gated] is False
 
 
 def test_continuity_markers_are_non_secret_and_non_authorizing() -> None:
