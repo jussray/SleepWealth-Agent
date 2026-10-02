@@ -1,11 +1,43 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "public_name": "MOM OF 8",
   "ticker": "MOM8",
   "identity_type": "public-token-branding",
   "target_surface": "pump.fun",
-  "status": "approved-branding-only",
+  "status": "capabilities-implemented-authority-gated",
   "paper_only": true,
+  "capabilities": {
+    "launch": {
+      "implemented": true,
+      "mode": "sandbox",
+      "implementation": "broker.crypto_sandbox.CryptoSandboxBroker.launch_asset"
+    },
+    "mint": {
+      "implemented": true,
+      "mode": "sandbox",
+      "implementation": "broker.crypto_sandbox.CryptoSandboxBroker.mint_asset"
+    },
+    "wallet": {
+      "implemented": true,
+      "mode": "sandbox",
+      "implementation": "broker.crypto_sandbox.CryptoSandboxBroker.wallet"
+    },
+    "trade": {
+      "implemented": true,
+      "mode": "sandbox",
+      "implementation": "broker.crypto_sandbox.CryptoSandboxBroker.trade"
+    },
+    "spend": {
+      "implemented": true,
+      "mode": "sandbox",
+      "implementation": "broker.crypto_sandbox.CryptoSandboxBroker.spend"
+    },
+    "transfer": {
+      "implemented": true,
+      "mode": "sandbox",
+      "implementation": "broker.crypto_sandbox.CryptoSandboxBroker.transfer_asset"
+    }
+  },
   "authority": {
     "branding": true,
     "launch": false,
@@ -23,8 +55,9 @@
     "renews_authority": false
   },
   "notes": [
-    "This manifest records public branding approval only.",
-    "It must never be interpreted as wallet, trading, minting, spending, transfer, or launch authority.",
+    "Capability availability and execution authority are separate contracts.",
+    "Launch, mint, wallet, trade, spend, and transfer are implemented in the governed sandbox capability surface.",
+    "The green capability state does not grant live-money authority.",
     "Any future live token action requires a separate explicit authority gate and independent receipt."
   ]
 }
