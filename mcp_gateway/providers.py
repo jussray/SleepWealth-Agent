@@ -10,6 +10,7 @@ class ProviderManifest:
     environments: tuple[str, ...]
     actions: tuple[str, ...]
     authority_required_actions: tuple[str, ...]
+    user_intent_required_actions: tuple[str, ...]
     money_moving_actions: tuple[str, ...]
     customer_approval_actions: tuple[str, ...]
     external_signer_actions: tuple[str, ...]
@@ -31,6 +32,7 @@ _PROVIDER_MANIFESTS = {
         environments=("external",),
         actions=("repo-read", "repo-write", "pr-review", "workflow-observe"),
         authority_required_actions=(),
+        user_intent_required_actions=(),
         money_moving_actions=(),
         customer_approval_actions=(),
         external_signer_actions=(),
@@ -51,6 +53,7 @@ _PROVIDER_MANIFESTS = {
             "get-signature-status",
         ),
         authority_required_actions=("broadcast-signed-transaction",),
+        user_intent_required_actions=(),
         money_moving_actions=("broadcast-signed-transaction",),
         customer_approval_actions=("broadcast-signed-transaction",),
         external_signer_actions=("broadcast-signed-transaction",),
@@ -72,12 +75,19 @@ _PROVIDER_MANIFESTS = {
             "query-vybe-api-batch",
         ),
         authority_required_actions=(),
+        user_intent_required_actions=(
+            "list-endpoints",
+            "search-endpoints",
+            "get-endpoint",
+            "query-vybe-api",
+            "query-vybe-api-batch",
+        ),
         money_moving_actions=(),
         customer_approval_actions=(),
         external_signer_actions=(),
         live_consequence_blocked_environments=(),
         notes=(
-            "Vybe is a read-only Solana intelligence lane inside Sleep Wealth.",
+            "Vybe is a user-intent-routed, read-only Solana intelligence lane inside Sleep Wealth.",
             "Transaction building and x402 payment are intentionally excluded from dispatch.",
             "Observed remote tool schemas are fingerprinted so capability drift renews evidence.",
         ),
@@ -88,6 +98,7 @@ _PROVIDER_MANIFESTS = {
         environments=("sandbox", "production"),
         actions=("create-customer-request", "create-payment", "retrieve-payment"),
         authority_required_actions=("create-customer-request", "create-payment"),
+        user_intent_required_actions=(),
         money_moving_actions=("create-payment",),
         customer_approval_actions=("create-customer-request", "create-payment"),
         external_signer_actions=(),
