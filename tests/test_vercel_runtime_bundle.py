@@ -88,8 +88,9 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "backend/pump_sandbox_receipts.py" in packaged
     assert "backend/vybe_proof.py" in packaged
     assert "authority/money_movement.py" in packaged
-    assert "authority/runtime.py" in packaged
-    assert "evidence/model.py" in packaged
+    assert "authority/__init__.py" not in packaged
+    assert "gate/__init__.py" not in packaged
+    assert "race/__init__.py" not in packaged
     assert "execution/sandbox_money.py" in packaged
     assert "integrations/vybe_mcp.py" in packaged
     assert "race/opportunity_evidence.py" in packaged
