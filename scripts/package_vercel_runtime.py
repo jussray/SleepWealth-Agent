@@ -20,6 +20,7 @@ RUNTIME_FILES = (
     "approvals/queue.py",
     "audit/__init__.py",
     "audit/logger.py",
+    "authority/money_movement.py",
     "backend/__init__.py",
     "backend/practice_state_store.py",
     "backend/server.py",
@@ -45,6 +46,7 @@ RUNTIME_FILES = (
     "execution/__init__.py",
     "execution/executor.py",
     "execution/modes.py",
+    "execution/sandbox_money.py",
     "integrations/__init__.py",
     "integrations/vybe_mcp.py",
     "gate/pump_money_boundary.py",
@@ -142,6 +144,12 @@ def vercel_deployment_contract(root: Path) -> dict:
 
 
 def _local_module_paths(root: Path, module: str) -> tuple[str, ...]:
+    """Return the concrete local module/package imported by one module path.
+
+    Parent package initializers are intentionally not implied. The Vercel bundle
+    uses selected directories such as gate/, race/, and authority/ as namespace
+    packages so broad source-package initializers cannot widen the runtime surface.
+    """
     if not module:
         return ()
     relative = module.replace(".", "/")
@@ -150,7 +158,7 @@ def _local_module_paths(root: Path, module: str) -> tuple[str, ...]:
 
 
 def missing_runtime_imports(root: Path, runtime_files: tuple[str, ...] = RUNTIME_FILES) -> list[str]:
-    """Return first-party Python imports present in the repo but absent from the bundle."""
+    """Return first-party imports whose source files are absent from the runtime bundle."""
     packaged = set(runtime_files)
     missing: set[str] = set()
     for relative in runtime_files:
@@ -162,12 +170,32 @@ def missing_runtime_imports(root: Path, runtime_files: tuple[str, ...] = RUNTIME
             modules: list[str] = []
             if isinstance(node, ast.Import):
                 modules.extend(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                modules.append(node.module)
-            for module in modules:
+            elif isinstance(node, ast.ImportFrom):
+                source_parts = list(Path(relative).with_suffix("").parts)
+                package_parts = source_parts[:-1]
+                if node.level:
+                    ascend = node.level - 1
+                    if ascend > len(package_parts):
+                        continue
+                    resolved = package_parts[: len(package_parts) - ascend]
+                    if node.module:
+                        resolved.extend(part for part in node.module.split(".") if part)
+                    base = ".".join(resolved)
+                else:
+                    base = str(node.module or "")
+                if base:
+                    modules.append(base)
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    candidate = f"{base}.{alias.name}" if base else alias.name
+                    if _local_module_paths(root, candidate):
+                        modules.append(candidate)
+            for module in dict.fromkeys(modules):
                 local_paths = _local_module_paths(root, module)
-                if local_paths and not any(path in packaged for path in local_paths):
-                    missing.update(local_paths)
+                for path in local_paths:
+                    if path not in packaged:
+                        missing.add(path)
     return sorted(missing)
 
 
