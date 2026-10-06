@@ -160,46 +160,6 @@ def _local_module_paths(root: Path, module: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(path for path in candidates if (root / path).is_file()))
 
 
-def _imported_modules(relative: str, node: ast.AST) -> tuple[str, ...]:
-    """Resolve absolute and relative imports as Python resolves them inside a package."""
-    if isinstance(node, ast.Import):
-        return tuple(alias.name for alias in node.names)
-
-    if not isinstance(node, ast.ImportFrom):
-        return ()
-
-    source_parts = list(Path(relative).with_suffix("").parts)
-    if source_parts and source_parts[-1] == "__init__":
-        package_parts = source_parts[:-1]
-    else:
-        package_parts = source_parts[:-1]
-
-    if node.level:
-        ascend = node.level - 1
-        if ascend > len(package_parts):
-            return ()
-        base_parts = package_parts[: len(package_parts) - ascend]
-        if node.module:
-            base_parts.extend(part for part in node.module.split(".") if part)
-        base = ".".join(base_parts)
-    else:
-        base = str(node.module or "")
-
-    modules: list[str] = []
-    if base:
-        modules.append(base)
-
-    # "from pkg import child" and "from . import child" may load a real submodule.
-    for alias in node.names:
-        if alias.name == "*":
-            continue
-        candidate = f"{base}.{alias.name}" if base else alias.name
-        if _local_module_paths(Path("."), candidate):
-            modules.append(candidate)
-
-    return tuple(dict.fromkeys(modules))
-
-
 def missing_runtime_imports(root: Path, runtime_files: tuple[str, ...] = RUNTIME_FILES) -> list[str]:
     """Return first-party imports whose source files are absent from the runtime bundle."""
     packaged = set(runtime_files)
