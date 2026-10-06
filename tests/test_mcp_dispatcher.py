@@ -11,10 +11,12 @@ from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import issue_product_action_authority
 from mcp_gateway.continuity import issue_continuity_cookie
 from mcp_gateway.dispatcher import ProviderDispatcher
+from mcp_gateway.user_intent import issue_user_intent_receipt
 from mcp_gateway.server import build_mcp_server
 
 COOKIE_KEY = "c" * 32
 AUTHORITY_KEY = "a" * 32
+INTENT_KEY = "i" * 32
 LEDGER_KEY = "l" * 32
 SOURCE_SHA = "d" * 40
 CALLER_FP = "9" * 64
@@ -22,6 +24,7 @@ HUMAN_FP = "8" * 64
 ADULT_FP = "7" * 64
 SESSION_FP = "6" * 64
 SUBJECT_FP = "5" * 64
+INTENT_FP = "4" * 64
 
 
 def _authority(*, provider, environment, account_fp, action, resource_fp, idem, amount=None):
@@ -68,11 +71,32 @@ def _cookie(
     )
 
 
+def _resource_fp(payload):
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return __import__("hashlib").sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _intent(*, provider, environment, action, payload, source_sha=SOURCE_SHA):
+    return issue_user_intent_receipt(
+        issuer_id="intent-issuer",
+        issuer_key=INTENT_KEY,
+        source_sha=source_sha,
+        caller_fingerprint=CALLER_FP,
+        subject_fingerprint=SUBJECT_FP,
+        provider=provider,
+        environment=environment,
+        action=action,
+        resource_fingerprint=_resource_fp({"action": action, "payload": payload}),
+        intent_fingerprint=INTENT_FP,
+    )
+
+
 def _dispatcher(tmp_path, *, solana=None, cash=None, vybe=None):
     return ProviderDispatcher(
         source_sha=SOURCE_SHA,
         continuity_keys={"cookie-issuer": COOKIE_KEY},
         authority_keys={"authority-issuer": AUTHORITY_KEY},
+        intent_keys={"intent-issuer": INTENT_KEY},
         ledger=ProductActionLedger(tmp_path / "ledger.json", LEDGER_KEY),
         solana=solana,
         cash_app_pay=cash,
@@ -80,7 +104,7 @@ def _dispatcher(tmp_path, *, solana=None, cash=None, vybe=None):
     )
 
 
-def _base_command(*, provider, environment, action, cookie, payload, authority=None, idem=None):
+def _base_command(*, provider, environment, action, cookie, payload, authority=None, idem=None, intent=None):
     command = {
         "caller_fingerprint": CALLER_FP,
         "subject_fingerprint": SUBJECT_FP,
@@ -94,6 +118,8 @@ def _base_command(*, provider, environment, action, cookie, payload, authority=N
         command["authority_receipt"] = authority
     if idem is not None:
         command["idempotency_key"] = idem
+    if intent is not None:
+        command["user_intent_receipt"] = intent
     return command
 
 
@@ -647,6 +673,52 @@ async def test_vybe_read_dispatch_becomes_non_authorizing_opportunity_evidence(t
     )
     dispatcher = _dispatcher(tmp_path, vybe=vybe)
     payload = {"path": "/v4/test", "query": {"limit": "1"}}
+    intent = _intent(
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        action="query-vybe-api",
+        payload=payload,
+    )
+
+    result = await dispatcher.dispatch(
+        _base_command(
+            provider="vybe-solana-mcp",
+            environment="mainnet-readonly",
+            action="query-vybe-api",
+            cookie=cookie,
+            payload=payload,
+            intent=intent,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["classification"] == "PROVIDER_READ_EXECUTED"
+    assert result["execution_authorized"] is False
+    assert result["account_fingerprint"] == account_fp
+    assert result["user_intent_receipt_id"].startswith("UIR-")
+    assert result["user_intent_fingerprint"] == INTENT_FP
+    assert result["user_intent_authorizes"] is False
+    assert vybe.calls == [("query-vybe-api", payload)]
+    evidence = result["opportunity_evidence"]
+    assert evidence["continuity_cookie"].startswith("sw-opportunity-v1:")
+    assert evidence["authorizes"] is False
+    assert evidence["allocation_authorized"] is False
+    assert evidence["execution_authorized"] is False
+    assert evidence["provider_fingerprint"] == account_fp
+
+
+@pytest.mark.asyncio
+async def test_vybe_read_without_user_intent_never_calls_provider(tmp_path):
+    vybe = FakeVybe()
+    account_fp = vybe.config.provider_fingerprint
+    cookie = _cookie(
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        account_fp=account_fp,
+        capability="query-vybe-api",
+    )
+    dispatcher = _dispatcher(tmp_path, vybe=vybe)
+    payload = {"path": "/v4/test", "query": {"limit": "1"}}
 
     result = await dispatcher.dispatch(
         _base_command(
@@ -658,17 +730,45 @@ async def test_vybe_read_dispatch_becomes_non_authorizing_opportunity_evidence(t
         )
     )
 
-    assert result["ok"] is True
-    assert result["classification"] == "PROVIDER_READ_EXECUTED"
-    assert result["execution_authorized"] is False
-    assert result["account_fingerprint"] == account_fp
-    assert vybe.calls == [("query-vybe-api", payload)]
-    evidence = result["opportunity_evidence"]
-    assert evidence["continuity_cookie"].startswith("sw-opportunity-v1:")
-    assert evidence["authorizes"] is False
-    assert evidence["allocation_authorized"] is False
-    assert evidence["execution_authorized"] is False
-    assert evidence["provider_fingerprint"] == account_fp
+    assert result["ok"] is False
+    assert result["classification"] == "MISSING_USER_INTENT"
+    assert vybe.calls == []
+
+
+@pytest.mark.asyncio
+async def test_vybe_user_intent_cannot_be_reused_for_different_query(tmp_path):
+    vybe = FakeVybe()
+    account_fp = vybe.config.provider_fingerprint
+    cookie = _cookie(
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        account_fp=account_fp,
+        capability="query-vybe-api",
+    )
+    dispatcher = _dispatcher(tmp_path, vybe=vybe)
+    original = {"path": "/v4/test", "query": {"limit": "1"}}
+    intent = _intent(
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        action="query-vybe-api",
+        payload=original,
+    )
+    changed = {"path": "/v4/test", "query": {"limit": "2"}}
+
+    result = await dispatcher.dispatch(
+        _base_command(
+            provider="vybe-solana-mcp",
+            environment="mainnet-readonly",
+            action="query-vybe-api",
+            cookie=cookie,
+            payload=changed,
+            intent=intent,
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["classification"] == "USER_INTENT_CONFLICT"
+    assert vybe.calls == []
 
 
 @pytest.mark.asyncio
@@ -718,3 +818,6 @@ async def test_mcp_server_exposes_only_capabilities_continuity_and_dispatch(tmp_
     capabilities = dispatcher.capabilities()
     assert capabilities["source_sha"] == SOURCE_SHA
     assert capabilities["authority_issuance_exposed_over_mcp"] is False
+    assert capabilities["user_intent_issuance_exposed_over_mcp"] is False
+    assert capabilities["user_intent_receipts_authorize"] is False
+    assert capabilities["user_intent_required_providers"] == ["vybe-solana-mcp"]
