@@ -6,6 +6,7 @@ import pytest
 
 from integrations.cash_app_pay import CashAppPayClient, CashAppPayConfig, CashAppPayCredentials
 from integrations.solana_rpc import SolanaRpcClient, SolanaRpcConfig, transaction_fingerprint
+from integrations.vybe_mcp import VybeMcpConfig
 from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import issue_product_action_authority
 from mcp_gateway.continuity import issue_continuity_cookie
@@ -67,7 +68,7 @@ def _cookie(
     )
 
 
-def _dispatcher(tmp_path, *, solana=None, cash=None):
+def _dispatcher(tmp_path, *, solana=None, cash=None, vybe=None):
     return ProviderDispatcher(
         source_sha=SOURCE_SHA,
         continuity_keys={"cookie-issuer": COOKIE_KEY},
@@ -75,6 +76,7 @@ def _dispatcher(tmp_path, *, solana=None, cash=None):
         ledger=ProductActionLedger(tmp_path / "ledger.json", LEDGER_KEY),
         solana=solana,
         cash_app_pay=cash,
+        vybe=vybe,
     )
 
 
@@ -610,6 +612,90 @@ async def test_cash_app_customer_request_is_consequential_and_requires_authority
 
     assert result["classification"] == "MISSING_AUTHORITY"
     assert called is False
+
+
+class FakeVybe:
+    def __init__(self):
+        self.config = VybeMcpConfig()
+        self.calls = []
+
+    async def call_read_tool(self, action, payload):
+        self.calls.append((action, dict(payload)))
+        return {
+            "provider": "vybe-solana-mcp",
+            "environment": "mainnet-readonly",
+            "provider_fingerprint": self.config.provider_fingerprint,
+            "capability_fingerprint": "c" * 64,
+            "result_fingerprint": "d" * 64,
+            "observed_at": "2026-10-06T10:30:00+00:00",
+            "result": {"status": 200, "body": {"value": 42}},
+            "execution_authorized": False,
+            "allocation_authorized": False,
+            "money_moving": False,
+        }
+
+
+@pytest.mark.asyncio
+async def test_vybe_read_dispatch_becomes_non_authorizing_opportunity_evidence(tmp_path):
+    vybe = FakeVybe()
+    account_fp = vybe.config.provider_fingerprint
+    cookie = _cookie(
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        account_fp=account_fp,
+        capability="query-vybe-api",
+    )
+    dispatcher = _dispatcher(tmp_path, vybe=vybe)
+    payload = {"path": "/v4/test", "query": {"limit": "1"}}
+
+    result = await dispatcher.dispatch(
+        _base_command(
+            provider="vybe-solana-mcp",
+            environment="mainnet-readonly",
+            action="query-vybe-api",
+            cookie=cookie,
+            payload=payload,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["classification"] == "PROVIDER_READ_EXECUTED"
+    assert result["execution_authorized"] is False
+    assert result["account_fingerprint"] == account_fp
+    assert vybe.calls == [("query-vybe-api", payload)]
+    evidence = result["opportunity_evidence"]
+    assert evidence["continuity_cookie"].startswith("sw-opportunity-v1:")
+    assert evidence["authorizes"] is False
+    assert evidence["allocation_authorized"] is False
+    assert evidence["execution_authorized"] is False
+    assert evidence["provider_fingerprint"] == account_fp
+
+
+@pytest.mark.asyncio
+async def test_vybe_transaction_builder_is_not_a_sleepwealth_dispatch_action(tmp_path):
+    vybe = FakeVybe()
+    account_fp = vybe.config.provider_fingerprint
+    cookie = _cookie(
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        account_fp=account_fp,
+        capability="build-vybe-transaction",
+    )
+    dispatcher = _dispatcher(tmp_path, vybe=vybe)
+
+    result = await dispatcher.dispatch(
+        _base_command(
+            provider="vybe-solana-mcp",
+            environment="mainnet-readonly",
+            action="build-vybe-transaction",
+            cookie=cookie,
+            payload={"path": "/v4/trading/swap", "body": {}},
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["classification"] == "ACTION_CONFLICT"
+    assert vybe.calls == []
 
 
 @pytest.mark.asyncio
