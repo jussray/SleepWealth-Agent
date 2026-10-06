@@ -18,6 +18,9 @@ RUNTIME_FILES = (
     "api/mom8_assets.py",
     "approvals/__init__.py",
     "approvals/queue.py",
+    "authority/__init__.py",
+    "authority/money_movement.py",
+    "authority/runtime.py",
     "audit/__init__.py",
     "audit/logger.py",
     "backend/__init__.py",
@@ -42,9 +45,12 @@ RUNTIME_FILES = (
     "engine/evaluator.py",
     "engine/truth_mode.py",
     "engine/validator.py",
+    "evidence/__init__.py",
+    "evidence/model.py",
     "execution/__init__.py",
     "execution/executor.py",
     "execution/modes.py",
+    "execution/sandbox_money.py",
     "integrations/__init__.py",
     "integrations/vybe_mcp.py",
     "gate/pump_money_boundary.py",
@@ -142,15 +148,67 @@ def vercel_deployment_contract(root: Path) -> dict:
 
 
 def _local_module_paths(root: Path, module: str) -> tuple[str, ...]:
+    """Return the local module plus every package initializer Python executes."""
+
     if not module:
         return ()
+
+    parts = module.split(".")
+    candidates: list[str] = []
+    for index in range(1, len(parts)):
+        candidates.append("/".join(parts[:index]) + "/__init__.py")
+
     relative = module.replace(".", "/")
-    candidates = (f"{relative}.py", f"{relative}/__init__.py")
-    return tuple(path for path in candidates if (root / path).is_file())
+    candidates.extend((f"{relative}.py", f"{relative}/__init__.py"))
+    return tuple(
+        dict.fromkeys(path for path in candidates if (root / path).is_file())
+    )
+
+
+def _module_name_from_runtime_path(relative: str) -> str:
+    path = Path(relative)
+    parts = list(path.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _resolved_import_modules(relative: str, node: ast.AST) -> tuple[str, ...]:
+    if isinstance(node, ast.Import):
+        return tuple(alias.name for alias in node.names)
+
+    if not isinstance(node, ast.ImportFrom):
+        return ()
+
+    if node.level == 0:
+        return (node.module,) if node.module else ()
+
+    current_module = _module_name_from_runtime_path(relative)
+    current_package = (
+        current_module
+        if relative.endswith("/__init__.py")
+        else current_module.rpartition(".")[0]
+    )
+    package_parts = [part for part in current_package.split(".") if part]
+    ascend = node.level - 1
+    if ascend > len(package_parts):
+        return ()
+    base_parts = package_parts[: len(package_parts) - ascend]
+    if node.module:
+        base_parts.extend(node.module.split("."))
+        return (".".join(base_parts),)
+
+    base = ".".join(base_parts)
+    candidates = [base] if base else []
+    for alias in node.names:
+        if alias.name != "*":
+            candidates.append(".".join(part for part in (base, alias.name) if part))
+    return tuple(candidates)
 
 
 def missing_runtime_imports(root: Path, runtime_files: tuple[str, ...] = RUNTIME_FILES) -> list[str]:
-    """Return first-party Python imports present in the repo but absent from the bundle."""
+    """Return first-party imports Python can execute that are absent from the bundle."""
+
     packaged = set(runtime_files)
     missing: set[str] = set()
     for relative in runtime_files:
@@ -159,15 +217,9 @@ def missing_runtime_imports(root: Path, runtime_files: tuple[str, ...] = RUNTIME
         source = root / relative
         tree = ast.parse(source.read_text(encoding="utf-8"), filename=relative)
         for node in ast.walk(tree):
-            modules: list[str] = []
-            if isinstance(node, ast.Import):
-                modules.extend(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                modules.append(node.module)
-            for module in modules:
+            for module in _resolved_import_modules(relative, node):
                 local_paths = _local_module_paths(root, module)
-                if local_paths and not any(path in packaged for path in local_paths):
-                    missing.update(local_paths)
+                missing.update(path for path in local_paths if path not in packaged)
     return sorted(missing)
 
 
