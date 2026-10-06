@@ -87,6 +87,10 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "backend/pump_live_box_server.py" in packaged
     assert "backend/pump_sandbox_receipts.py" in packaged
     assert "backend/vybe_proof.py" in packaged
+    assert "authority/money_movement.py" in packaged
+    assert "authority/runtime.py" in packaged
+    assert "evidence/model.py" in packaged
+    assert "execution/sandbox_money.py" in packaged
     assert "integrations/vybe_mcp.py" in packaged
     assert "race/opportunity_evidence.py" in packaged
     assert "gate/pump_practice_graduation.py" in packaged
@@ -110,6 +114,18 @@ def test_runtime_import_closure_rejects_missing_first_party_dependency():
         validate_runtime_import_closure(root, incomplete)
 
 
+def test_runtime_import_closure_resolves_relative_package_imports():
+    root = Path(__file__).resolve().parents[1]
+    incomplete = tuple(
+        path for path in RUNTIME_FILES if path != "execution/sandbox_money.py"
+    )
+
+    missing = missing_runtime_imports(root, incomplete)
+    assert "execution/sandbox_money.py" in missing
+    with pytest.raises(RuntimeError, match="execution/sandbox_money"):
+        validate_runtime_import_closure(root, incomplete)
+
+
 def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     output = tmp_path / "runtime"
@@ -117,8 +133,13 @@ def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
     package_runtime(root, output, source_sha=source_sha)
 
     monkeypatch.syspath_prepend(str(output))
+    first_party = {
+        path.split("/", 1)[0]
+        for path in RUNTIME_FILES
+        if path.endswith(".py") and "/" in path
+    }
     for name in list(__import__("sys").modules):
-        if name == "api" or name.startswith("api.") or name == "backend" or name.startswith("backend."):
+        if name.split(".", 1)[0] in first_party:
             __import__("sys").modules.pop(name, None)
 
     imported = __import__("api.index", fromlist=["handler"])
