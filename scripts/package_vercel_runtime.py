@@ -20,9 +20,7 @@ RUNTIME_FILES = (
     "approvals/queue.py",
     "audit/__init__.py",
     "audit/logger.py",
-    "authority/__init__.py",
     "authority/money_movement.py",
-    "authority/runtime.py",
     "backend/__init__.py",
     "backend/practice_state_store.py",
     "backend/server.py",
@@ -45,8 +43,6 @@ RUNTIME_FILES = (
     "engine/evaluator.py",
     "engine/truth_mode.py",
     "engine/validator.py",
-    "evidence/__init__.py",
-    "evidence/model.py",
     "execution/__init__.py",
     "execution/executor.py",
     "execution/modes.py",
@@ -148,16 +144,17 @@ def vercel_deployment_contract(root: Path) -> dict:
 
 
 def _local_module_paths(root: Path, module: str) -> tuple[str, ...]:
-    """Return local module files plus real package initializers for one import path."""
+    """Return the concrete local module/package imported by one module path.
+
+    Parent package initializers are intentionally not implied. The Vercel bundle
+    uses selected directories such as gate/, race/, and authority/ as namespace
+    packages so broad source-package initializers cannot widen the runtime surface.
+    """
     if not module:
         return ()
-    parts = [part for part in module.split(".") if part]
-    candidates: list[str] = []
-    for index in range(1, len(parts)):
-        candidates.append("/".join(parts[:index]) + "/__init__.py")
-    relative = "/".join(parts)
-    candidates.extend((f"{relative}.py", f"{relative}/__init__.py"))
-    return tuple(dict.fromkeys(path for path in candidates if (root / path).is_file()))
+    relative = module.replace(".", "/")
+    candidates = (f"{relative}.py", f"{relative}/__init__.py")
+    return tuple(path for path in candidates if (root / path).is_file())
 
 
 def missing_runtime_imports(root: Path, runtime_files: tuple[str, ...] = RUNTIME_FILES) -> list[str]:
