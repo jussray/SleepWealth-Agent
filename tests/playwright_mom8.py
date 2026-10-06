@@ -30,9 +30,10 @@ def prove(context, prefix: str) -> None:
 
     expect(page.get_by_role("heading", name="MOM OF 8 MOM8")).to_be_visible()
     expect(page.get_by_text("REAL PEOPLE · REAL PROGRESS · BUILD IN PUBLIC")).to_be_visible()
-    expect(page.get_by_text("PRELAUNCH BRAND PREVIEW · NO EXECUTION AUTHORITY")).to_be_visible()
-    expect(page.get_by_text("Brand-ready does not mean launch-authorized.")).to_be_visible()
-    expect(page.get_by_text("Wallet, mint, launch & trade authority")).to_be_visible()
+    expect(page.get_by_text("CAPABILITIES READY · LIVE AUTHORITY GATED")).to_be_visible()
+    expect(page.get_by_text("Launch · Mint · Wallet · Trade · Spend · Transfer", exact=False)).to_be_visible()
+    expect(page.get_by_text("Implemented does not mean autonomously authorized.")).to_be_visible()
+    expect(page.get_by_text("Live-money authority until explicit approval")).to_be_visible()
     expect(page.get_by_text("LOCKED", exact=True)).to_be_visible()
     expect(page.get_by_text("MOM8::prelaunch-brand-assets::v1")).to_be_visible()
     expect(page.get_by_text("mom8-prelaunch-brand-assets-v1", exact=False)).to_be_visible()
@@ -59,6 +60,15 @@ def write_manifest() -> None:
         "identity": {"public_name": "MOM OF 8", "ticker": "MOM8"},
         "asset_fingerprint": "MOM8::prelaunch-brand-assets::v1",
         "proof_cookie": "mom8-prelaunch-brand-assets-v1",
+        "capabilities": {
+            "launch": True,
+            "mint": True,
+            "wallet": True,
+            "trade": True,
+            "spend": True,
+            "transfer": True,
+            "mode": "sandbox",
+        },
         "authority": {
             "branding": True,
             "wallet": False,
@@ -68,6 +78,8 @@ def write_manifest() -> None:
             "spend": False,
             "transfer": False,
         },
+        "real_money": False,
+        "live_execution": False,
         "screenshots": [
             {"name": name, "sha256": sha256_file(ARTIFACT_DIR / name)} for name in names
         ],
