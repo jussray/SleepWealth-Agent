@@ -17,6 +17,7 @@ from engine.truth_mode import (
 )
 from engine.validator import RulesValidator
 from rules import load_rules
+from race.identity import product_identity_receipt
 
 
 MAX_CAPITAL_TRUTH_CYCLES = 500
@@ -26,6 +27,13 @@ def health_payload() -> dict[str, object]:
     rules = load_rules()
     return {
         "status": "ok",
+        "product_identity": product_identity_receipt(),
+        "execution_boundary": {
+            "mode": "paper",
+            "broker": "mock",
+            "market_observation": "read-only",
+            "live_execution": False,
+        },
         "mode": "paper",
         "broker": "mock",
         "market_source": os.getenv("SLEEPWEALTH_MARKET_SOURCE", "yahoo-public"),
@@ -135,12 +143,12 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
     Path(os.getenv("SLEEPWEALTH_AUDIT_LOG", "audit.log")).parent.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer((host, port), RuntimeIdentityHandler)
     identity = runtime_identity()
-    print(f"Sleep Wealth paper backend listening on http://{host}:{port}")
+    print(f"Sleep Wealth runtime listening on http://{host}:{port}")
     print(
         "Runtime identity: "
         f"source_sha={identity['source_sha'] or 'unknown'} "
         f"provider={identity['source_provider']} "
-        f"known={identity['exact_source_known']} | live execution=disabled | broker=mock"
+        f"known={identity['exact_source_known']} | execution boundary=paper/mock | live execution=disabled"
     )
     try:
         server.serve_forever()
@@ -151,7 +159,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sleep Wealth paper runtime identity server")
+    parser = argparse.ArgumentParser(description="Sleep Wealth runtime identity server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
