@@ -1,7 +1,10 @@
-# Musk vs Gates — $5 Race Harness
+# Musk vs Gates — Sleep Wealth Race Harness
 
-Two governed engines race the same $5 over a window you choose. The loser reads
-the winner's **moves**, not its P&L. You read both and decide what happens next.
+This is the first implemented harness for the broader **Sleep Wealth autonomous-strategy wealth race**. MuskEngine and GatesEngine are competing strategic brains, not two paper portfolios. They pursue the same goal with different decision styles, learn from each other, and carry separate renewable strategy fingerprints.
+
+The $5 stake, market feed, and paper sandbox are the current test fixture and execution boundary. They are not the product definition. Stocks and crypto are current opportunity capabilities; future proven products, services, software, partnerships, or other money-making lanes can feed the same race without creating a new Sleep Wealth product.
+
+Two governed engines currently race the same $5 over a window you choose. Each reads the other's **moves**, not just its P&L. You read both and decide what happens next.
 
 ```
   MuskEngine  (risk ≤ 75, maxDD 25%)      GatesEngine (risk ≤ 30, maxDD 8%)
@@ -97,4 +100,4 @@ asking for paper. Any disagreement disconnects without trading.
 - **No alpha here.** `PriceFeed` is a seeded random walk for exercising the
   harness. Point `BrokerFeed` at a real broker before any number means anything.
 - The engines are style archetypes, not trading strategies.
-- The asset is the governance shell — the $5 is the test fixture.
+- The asset is the race engine plus its governance/learning/continuity system; the $5 market sandbox is the current test fixture.

@@ -5,9 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sleepwealth-agent"
 version = "0.1.0"
-description = "SleepWealth Agent: governed market observation and local simulation research shell."
+description = "SleepWealth Agent: governed market observation, simulation, and authority-gated provider integrations."
 requires-python = ">=3.11"
-dependencies = ["typer>=0.12.0", "httpx>=0.25.0", "jsonschema>=4.26.0,<5"]
+dependencies = [
+  "typer>=0.12.0",
+  "httpx>=0.25.0",
+  "jsonschema>=4.26.0,<5",
+  "mcp>=2,<3",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4.0", "pytest-asyncio>=0.23.0", "black>=23.0.0", "ruff>=0.1.0", "playwright>=1.47.0,<2"]
@@ -16,12 +21,31 @@ ibkr-readonly = ["ib_async>=2.1.0,<3"]
 [project.scripts]
 sleepwealth-agent = "cli.main:app"
 sleepwealth-race = "cli.race:main"
+sleepwealth-mcp = "mcp_gateway.server:main"
 trading-agent = "cli.main:app"
 trading-race = "cli.race:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["approvals*", "audit*", "authority*", "backend*", "broker*", "cli*", "engine*", "evidence*", "execution*", "gate*", "market*", "portfolio*", "race*", "risk*", "rules*"]
+include = [
+  "approvals*",
+  "audit*",
+  "authority*",
+  "backend*",
+  "broker*",
+  "cli*",
+  "engine*",
+  "evidence*",
+  "execution*",
+  "gate*",
+  "integrations*",
+  "market*",
+  "mcp_gateway*",
+  "portfolio*",
+  "race*",
+  "risk*",
+  "rules*",
+]
 
 [tool.setuptools.package-data]
 rules = ["*.json"]

@@ -76,6 +76,16 @@ def test_health_payload_keeps_paper_only_boundary(monkeypatch):
     monkeypatch.setenv("SLEEPWEALTH_MARKET_SOURCE", "mock")
     payload = health_payload()
     assert payload["status"] == "ok"
+    assert payload["product_identity"]["contract"] == "sleepwealth/autonomous-wealth-race@v2"
+    assert payload["product_identity"]["identity"]["kind"] == "autonomous-strategy-wealth-race"
+    assert payload["product_identity"]["continuity_cookie"].startswith("sw-product-v2:")
+    assert payload["product_identity"]["authorizes"] is False
+    assert payload["execution_boundary"] == {
+        "mode": "paper",
+        "broker": "mock",
+        "market_observation": "read-only",
+        "live_execution": False,
+    }
     assert payload["mode"] == "paper"
     assert payload["broker"] == "mock"
     assert payload["market_observation"] == "read-only"

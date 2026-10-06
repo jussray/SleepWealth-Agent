@@ -1,8 +1,10 @@
-# trading-agent
+# Sleep Wealth
 
-A governed trading agent. The machine proposes; the human owns the ceiling.
+Sleep Wealth is a governed **autonomous-strategy wealth race**. Two competing strategic engines explore, test, learn from, and allocate toward money-making opportunity lanes according to evidence and verified outcomes.
 
-Paper/simulation execution only. Live account observation is being built as a separate evidence plane; live order execution remains disabled at both the CLI and broker-factory layers.
+The current repository is market-heavy because stocks and crypto were the first implemented test lanes. They are capabilities inside Sleep Wealth, not its product definition. Products, services, software, partnerships, and other opportunity lanes belong to the same race only when their capability and outcome evidence is actually implemented and proven.
+
+Paper/mock execution is the **current execution and safety boundary**, not the identity of Sleep Wealth. The machine-readable product identity lives in `race/identity.py`; its product fingerprint stays stable when an execution boundary changes, while each competitor's strategy fingerprint renews when its strategy configuration changes. Continuity cookies are non-secret state markers and never grant authority.
 
 ## Public token identity
 

@@ -7,6 +7,7 @@ from race.engines.base import EngineState, MarketSnapshot, Tick
 from race.engines.gates import GatesEngine
 from race.engines.musk import MuskEngine
 from race.harness import RaceHarness
+from race.identity import product_identity_receipt, race_continuity_receipt
 from race.ledger import BASE_STAKE, StakeLedger, VaultBreach
 from race.modes import Decision, FutureYou, Mode
 
@@ -15,6 +16,39 @@ SYMS = ["AAPL", "MSFT", "VTI"]
 
 def fy(durable=True):
     return FutureYou(enables="x", breaks="y", durable=durable)
+
+
+def test_product_identity_is_the_race_not_the_paper_boundary():
+    receipt = product_identity_receipt()
+    identity = receipt["identity"]
+    assert receipt["contract"] == "sleepwealth/autonomous-wealth-race@v2"
+    assert identity["kind"] == "autonomous-strategy-wealth-race"
+    assert identity["competitors"] == ["MuskEngine", "GatesEngine"]
+    assert "not the product definition" in identity["execution_separation"]
+    assert receipt["continuity_cookie"].startswith("sw-product-v2:")
+    assert receipt["authorizes"] is False
+
+
+def test_both_competitors_have_distinct_renewable_strategy_fingerprints():
+    musk, gates = MuskEngine(SYMS), GatesEngine(SYMS)
+    before = race_continuity_receipt([musk, gates])
+    by_name = {item["engine"]: item for item in before["engines"]}
+
+    assert by_name["Musk"]["fingerprint"] != by_name["Gates"]["fingerprint"]
+    assert by_name["Musk"]["continuity_cookie"].startswith("sw-engine-v2:")
+    assert by_name["Gates"]["continuity_cookie"].startswith("sw-engine-v2:")
+    assert before["continuity_cookie"].startswith("sw-race-v2:")
+    assert before["authorizes"] is False
+
+    product_fingerprint = before["product"]["fingerprint"]
+    musk.conviction_size -= 0.10
+    after = race_continuity_receipt([musk, gates])
+    after_by_name = {item["engine"]: item for item in after["engines"]}
+
+    assert after["product"]["fingerprint"] == product_fingerprint
+    assert after_by_name["Musk"]["fingerprint"] != by_name["Musk"]["fingerprint"]
+    assert after_by_name["Gates"]["fingerprint"] == by_name["Gates"]["fingerprint"]
+    assert after["fingerprint"] != before["fingerprint"]
 
 
 def test_decision_requires_futureyou():

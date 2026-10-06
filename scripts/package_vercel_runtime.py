@@ -56,6 +56,7 @@ RUNTIME_FILES = (
     "portfolio/__init__.py",
     "portfolio/models.py",
     "portfolio/tracker.py",
+    "race/identity.py",
     "risk/__init__.py",
     "risk/gates.py",
     "rules/__init__.py",

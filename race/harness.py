@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 
 from audit.logger import AuditLogger
 from race.engines.base import EngineState, MarketSnapshot, RaceEngine, Tick
+from race.identity import race_continuity_receipt
 from race.ledger import StakeLedger
 from race.modes import Decision
 from race.scoring import EngineScore, RaceResult
@@ -190,6 +191,11 @@ class RaceHarness:
             )
             eng.decisions = []
 
+        continuity = race_continuity_receipt(self.engines)
+        engine_continuity = {
+            receipt["engine"]: receipt for receipt in continuity["engines"]
+        }
+
         await self.audit.log({
             "event": "race_started",
             "race_id": self.race_id,
@@ -198,6 +204,7 @@ class RaceHarness:
             "symbols": symbols,
             "stakes": {e.name: self.ledger.stake_for(e.name) for e in self.engines},
             "vault_locked": self.ledger.vault,
+            "continuity": continuity,
         })
 
         if verbose:
@@ -228,6 +235,13 @@ class RaceHarness:
                     "tick": i,
                     "equity": round(equity, 4),
                     "fill": fill,
+                    "continuity": {
+                        "product_fingerprint": continuity["product"]["fingerprint"],
+                        "race_fingerprint": continuity["fingerprint"],
+                        "race_cookie": continuity["continuity_cookie"],
+                        "engine_fingerprint": engine_continuity[eng.name]["fingerprint"],
+                        "engine_cookie": engine_continuity[eng.name]["continuity_cookie"],
+                    },
                     **decision.to_dict(),
                 })
 
@@ -280,6 +294,7 @@ class RaceHarness:
             "event": "race_finished",
             **result.to_dict(),
             "vault_after": self.ledger.vault,
+            "continuity": continuity,
         })
 
         if verbose:
