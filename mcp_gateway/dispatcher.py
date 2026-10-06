@@ -11,6 +11,7 @@ from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import validate_product_action_authority
 from mcp_gateway.continuity import validate_continuity_cookie
 from mcp_gateway.providers import get_provider_manifest, provider_manifests
+from mcp_gateway.user_intent import validate_user_intent_receipt
 from race.opportunity_evidence import opportunity_evidence_receipt
 
 
@@ -42,6 +43,7 @@ class ProviderDispatcher:
         source_sha: str,
         continuity_keys: Mapping[str, object],
         authority_keys: Mapping[str, object],
+        intent_keys: Mapping[str, object] | None = None,
         ledger: ProductActionLedger,
         solana: SolanaRpcClient | None = None,
         cash_app_pay: CashAppPayClient | None = None,
@@ -53,6 +55,7 @@ class ProviderDispatcher:
         self.source_sha = source_sha
         self.continuity_keys = dict(continuity_keys)
         self.authority_keys = dict(authority_keys)
+        self.intent_keys = dict(intent_keys or {})
         self.ledger = ledger
         self.solana = solana
         self.cash_app_pay = cash_app_pay
@@ -67,6 +70,9 @@ class ProviderDispatcher:
             "continuity_cookies_authorize": False,
             "credentials_in_mcp_payloads": False,
             "authority_issuance_exposed_over_mcp": False,
+            "user_intent_issuance_exposed_over_mcp": False,
+            "user_intent_receipts_authorize": False,
+            "user_intent_required_providers": ["vybe-solana-mcp"],
             "consequential_actions_require_product_authority": True,
         }
 
@@ -131,6 +137,34 @@ class ProviderDispatcher:
             )
         except (KeyError, TypeError, ValueError) as exc:
             return self._blocked("INVALID_SCOPE", str(exc))
+
+        user_intent_receipt_id: str | None = None
+        user_intent_fingerprint: str | None = None
+        if provider == "vybe-solana-mcp":
+            intent = command.get("user_intent_receipt")
+            if not isinstance(intent, Mapping):
+                return self._blocked(
+                    "MISSING_USER_INTENT",
+                    "Vybe/Solana reads require an explicit user-intent receipt",
+                )
+            intent_decision = validate_user_intent_receipt(
+                intent,
+                trusted_keys=self.intent_keys,
+                source_sha=self.source_sha,
+                caller_fingerprint=caller_fingerprint,
+                subject_fingerprint=subject_fingerprint,
+                provider=provider,
+                environment=environment,
+                action=action,
+                resource_fingerprint=resource_fingerprint,
+            )
+            if not intent_decision.accepted:
+                return self._blocked(
+                    intent_decision.classification,
+                    intent_decision.reason,
+                )
+            user_intent_receipt_id = intent_decision.receipt_id
+            user_intent_fingerprint = intent_decision.intent_fingerprint
 
         cookie = command.get("continuity_cookie")
         if not isinstance(cookie, Mapping):
@@ -287,6 +321,9 @@ class ProviderDispatcher:
             "account_fingerprint": account_fingerprint,
             "provider_result": result,
             "execution_authorized": False,
+            "user_intent_receipt_id": user_intent_receipt_id,
+            "user_intent_fingerprint": user_intent_fingerprint,
+            "user_intent_authorizes": False,
         }
         if provider == "vybe-solana-mcp":
             response["opportunity_evidence"] = opportunity_evidence_receipt(
