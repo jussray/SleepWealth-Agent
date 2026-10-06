@@ -47,6 +47,33 @@ Networks are explicit: `devnet`, `testnet`, or `mainnet-beta`. The requested env
 
 The repository's current paper/simulation ceiling is enforced at dispatch: `broadcast-signed-transaction` is allowed only on `devnet` or `testnet`. A `mainnet-beta` client may be used for non-authorizing observation/simulation/status reads, but the MCP gateway refuses mainnet broadcast with `PAPER_ONLY_CEILING` even if a structurally valid product-authority receipt is supplied.
 
+## Vybe Solana intelligence
+
+Solana MCP by Vybe is integrated as a separate **read-only intelligence provider**, not as a replacement for the direct `solana-rpc` adapter.
+
+Sleep Wealth allowlists only:
+
+- `list-endpoints`
+- `search-endpoints`
+- `get-endpoint`
+- `query-vybe-api`
+- `query-vybe-api-batch`
+
+The remote MCP also advertises transaction construction and x402 guidance. Sleep Wealth intentionally excludes `build-vybe-transaction` and `pay-with-x402` from local dispatch. They cannot be reached by minting a broader continuity cookie because the provider manifest itself does not contain those actions.
+
+Every Vybe read records:
+
+- canonical provider endpoint fingerprint
+- observed remote tool-schema fingerprint
+- exact Sleep Wealth query/resource fingerprint
+- returned-result fingerprint
+- observation time
+- a non-authorizing `sw-opportunity-v1` continuity cookie
+
+The opportunity-evidence receipt can feed either race engine as evidence, but it explicitly does not prove profitability, future returns, allocation authority, transaction authority, or payment authority.
+
+Runtime OAuth remains a deployment secret. Set `SLEEPWEALTH_VYBE_MCP_ENABLED=true` and provide `SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN`; the token is passed only to the outbound MCP transport and is never accepted in a Sleep Wealth MCP command payload or included in receipts.
+
 ## Cash App Pay
 
 Cash App Pay is represented according to its supported developer model: customer-approved merchant payments, not arbitrary peer-to-peer Cash App balance control.
@@ -100,7 +127,7 @@ Required MCP control-plane variables:
 - `SLEEPWEALTH_MCP_AUTHORITY_KEY`
 - `SLEEPWEALTH_MCP_LEDGER_KEY`
 
-Optional provider variables configure Solana RPC and Cash App Pay. Secrets must be supplied by deployment secret storage. Never commit provider secrets or private keys.
+Optional provider variables configure Solana RPC, Vybe Solana intelligence, and Cash App Pay. Secrets must be supplied by deployment secret storage. Never commit provider secrets, OAuth bearer tokens, or private keys.
 
 The server defaults to MCP stdio. `SLEEPWEALTH_MCP_TRANSPORT=streamable-http` exposes `/mcp`.
 
