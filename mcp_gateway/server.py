@@ -8,6 +8,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from integrations.cash_app_pay import CashAppPayClient, CashAppPayConfig, CashAppPayCredentials
 from integrations.solana_rpc import SolanaRpcClient, SolanaRpcConfig
+from integrations.vybe_mcp import DEFAULT_VYBE_MCP_ENDPOINT, VybeMcpClient, VybeMcpConfig
 from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.continuity import validate_continuity_cookie
 from mcp_gateway.dispatcher import ProviderDispatcher
@@ -65,6 +66,24 @@ def build_dispatcher_from_env() -> ProviderDispatcher:
             credentials=credentials,
         )
 
+    vybe = None
+    vybe_enabled = os.getenv("SLEEPWEALTH_VYBE_MCP_ENABLED", "").strip().lower()
+    vybe_token = os.getenv("SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN", "").strip()
+    if vybe_enabled in {"1", "true", "yes"} or vybe_token:
+        if not vybe_token:
+            raise RuntimeError(
+                "SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN is required when Vybe MCP is enabled"
+            )
+        vybe = VybeMcpClient(
+            VybeMcpConfig(
+                endpoint=os.getenv(
+                    "SLEEPWEALTH_VYBE_MCP_URL",
+                    DEFAULT_VYBE_MCP_ENDPOINT,
+                ).strip(),
+                bearer_token=vybe_token,
+            )
+        )
+
     return ProviderDispatcher(
         source_sha=source_sha,
         continuity_keys={cookie_issuer: cookie_key},
@@ -72,6 +91,7 @@ def build_dispatcher_from_env() -> ProviderDispatcher:
         ledger=ProductActionLedger(ledger_path, ledger_key),
         solana=solana,
         cash_app_pay=cash_app_pay,
+        vybe=vybe,
     )
 
 

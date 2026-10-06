@@ -73,6 +73,14 @@ The racing rules:
 $5 winner bonus, because the bonus draws from it. Tune `WINNER_BONUS` in
 `race/ledger.py` if you'd rather the vault build first.
 
+## Capability evidence lanes
+
+The race may consume evidence from capabilities that are broader than the first market sandbox without redefining Sleep Wealth around those capabilities.
+
+The first implemented external capability-evidence lane is **Vybe Solana intelligence**. A live read is normalized into a `sleepwealth/opportunity-evidence@v1` receipt containing provider, capability, query/resource, result, and observation fingerprints. Either competitor may inspect the same evidence while retaining its own strategy fingerprint.
+
+Evidence is not a winner declaration. A Vybe observation cannot by itself prove profitability, allocate capital, construct a transaction, authorize a payment, or widen the paper/simulation ceiling. The race must still measure outcomes before a lane earns more resources.
+
 ## Cross-learning
 
 Runs **both** directions. The winner also reads the loser — a win can be luck,
