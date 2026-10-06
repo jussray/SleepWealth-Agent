@@ -23,11 +23,18 @@ def test_mom8_visual_system_preserves_canonical_identity() -> None:
     assert data["continuity"]["proof_cookie"] == "mom8-prelaunch-brand-assets-v1"
 
 
-def test_visual_assets_cannot_expand_financial_authority() -> None:
+def test_visual_contract_marks_crypto_capabilities_implemented() -> None:
+    capabilities = load_visual()["capabilities"]
+    assert capabilities["mode"] == "sandbox"
+    for implemented in ("wallet", "mint", "launch", "trade", "spend", "transfer"):
+        assert capabilities[implemented] is True
+
+
+def test_visual_assets_cannot_expand_live_financial_authority() -> None:
     authority = load_visual()["authority"]
     assert authority["public_brand_assets"] is True
-    for denied in ("wallet", "mint", "launch", "trade", "spend", "transfer", "financial_promises"):
-        assert authority[denied] is False
+    for gated in ("wallet", "mint", "launch", "trade", "spend", "transfer", "financial_promises"):
+        assert authority[gated] is False
 
 
 def test_continuity_markers_are_non_secret_and_non_authorizing() -> None:
@@ -37,10 +44,11 @@ def test_continuity_markers_are_non_secret_and_non_authorizing() -> None:
     assert continuity["renews_authority"] is False
 
 
-def test_public_preview_states_the_authority_guardrail() -> None:
+def test_public_preview_separates_capability_from_authority() -> None:
     html = PREVIEW.read_text()
-    assert "Brand-ready does not mean launch-authorized." in html
-    assert "cannot connect a wallet, mint, launch, trade, spend, transfer" in html
+    assert "CAPABILITIES READY · LIVE AUTHORITY GATED" in html
+    assert "Launch · Mint · Wallet · Trade · Spend · Transfer" in html
+    assert "Implemented does not mean autonomously authorized." in html
     assert "MOM8::prelaunch-brand-assets::v1" in html
     assert "mom8-prelaunch-brand-assets-v1" in html
 
