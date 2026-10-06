@@ -13,6 +13,7 @@ class ProviderManifest:
     money_moving_actions: tuple[str, ...]
     customer_approval_actions: tuple[str, ...]
     external_signer_actions: tuple[str, ...]
+    live_consequence_blocked_environments: tuple[str, ...]
     notes: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
@@ -33,6 +34,7 @@ _PROVIDER_MANIFESTS = {
         money_moving_actions=(),
         customer_approval_actions=(),
         external_signer_actions=(),
+        live_consequence_blocked_environments=(),
         notes=(
             "GitHub is a control-plane/MCP caller surface, not a financial provider.",
             "Repository credentials stay in GitHub-native secret or app storage.",
@@ -52,6 +54,7 @@ _PROVIDER_MANIFESTS = {
         money_moving_actions=("broadcast-signed-transaction",),
         customer_approval_actions=("broadcast-signed-transaction",),
         external_signer_actions=("broadcast-signed-transaction",),
+        live_consequence_blocked_environments=("mainnet-beta",),
         notes=(
             "SleepWealth never accepts a private key through MCP.",
             "Broadcast accepts an already-signed transaction and binds authority to its SHA-256 fingerprint.",
@@ -66,6 +69,7 @@ _PROVIDER_MANIFESTS = {
         money_moving_actions=("create-payment",),
         customer_approval_actions=("create-customer-request", "create-payment"),
         external_signer_actions=(),
+        live_consequence_blocked_environments=("production",),
         notes=(
             "Cash App Pay is modeled as customer-approved merchant payments, not arbitrary peer-to-peer balance control.",
             "Customer-request creation and payment dispatch both require SleepWealth product authority; payment also requires the Cash App customer grant.",
