@@ -7,7 +7,9 @@ def test_mom8_index_is_served_from_canonical_public_asset() -> None:
     assert content_type == "text/html; charset=utf-8"
     assert "MOM OF 8 / MOM8" in text
     assert "MOM8::prelaunch-brand-assets::v1" in text
-    assert "Brand-ready does not mean launch-authorized." in text
+    assert "CAPABILITIES READY · LIVE AUTHORITY GATED" in text
+    assert "Launch · Mint · Wallet · Trade · Spend · Transfer" in text
+    assert "Implemented does not mean autonomously authorized." in text
 
 
 def test_mom8_static_assets_are_allowlisted() -> None:
