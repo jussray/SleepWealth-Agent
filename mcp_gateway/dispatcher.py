@@ -103,6 +103,15 @@ class ProviderDispatcher:
                 "GitHub is represented as an MCP/control-plane caller surface, not a dispatched money provider",
             )
 
+        if (
+            environment in manifest.live_consequence_blocked_environments
+            and action in manifest.authority_required_actions
+        ):
+            return self._blocked(
+                "PAPER_ONLY_CEILING",
+                "this repository may observe live providers but cannot dispatch consequential actions in a live environment",
+            )
+
         configured_environment = self._configured_environment(provider)
         if environment != configured_environment:
             return self._blocked(
