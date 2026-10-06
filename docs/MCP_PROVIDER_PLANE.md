@@ -45,6 +45,8 @@ The adapter has an external-signer boundary. It never accepts a private key. A b
 
 Networks are explicit: `devnet`, `testnet`, or `mainnet-beta`. The requested environment must equal the network configured in the running provider client. The RPC endpoint must use HTTPS outside loopback.
 
+The repository's current paper/simulation ceiling is enforced at dispatch: `broadcast-signed-transaction` is allowed only on `devnet` or `testnet`. A `mainnet-beta` client may be used for non-authorizing observation/simulation/status reads, but the MCP gateway refuses mainnet broadcast with `PAPER_ONLY_CEILING` even if a structurally valid product-authority receipt is supplied.
+
 ## Cash App Pay
 
 Cash App Pay is represented according to its supported developer model: customer-approved merchant payments, not arbitrary peer-to-peer Cash App balance control.
@@ -58,6 +60,8 @@ Supported product actions:
 Both customer-request creation and payment dispatch are external consequential actions and therefore require SleepWealth product authority. `create-payment` additionally requires the Cash App grant produced by customer approval. Network API requests are HMAC-SHA256 signed, idempotent, and use runtime credentials that never enter MCP payloads or receipts.
 
 The MCP command idempotency key must equal the Cash App request-body idempotency key. Sandbox and production are distinct environments, and the requested environment must match the configured Cash App client.
+
+The current paper/simulation ceiling permits consequential Cash App Pay calls only in `sandbox`. Production may be used for non-authorizing retrieval/observation, but `create-customer-request` and `create-payment` fail closed with `PAPER_ONLY_CEILING` before any provider request is sent. Product authority cannot override this repository-level ceiling.
 
 ## Product action authority
 
