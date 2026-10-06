@@ -43,6 +43,19 @@ with sync_playwright() as p:
 
 identity = payload["runtime_identity"]
 assert payload["status"] == "ok"
+product_identity = payload["product_identity"]
+assert product_identity["contract"] == "sleepwealth/autonomous-wealth-race@v2"
+assert product_identity["identity"]["kind"] == "autonomous-strategy-wealth-race"
+assert product_identity["identity"]["competitors"] == ["MuskEngine", "GatesEngine"]
+assert "not the product definition" in product_identity["identity"]["execution_separation"]
+assert product_identity["continuity_cookie"].startswith("sw-product-v2:")
+assert product_identity["authorizes"] is False
+assert payload["execution_boundary"] == {
+    "mode": "paper",
+    "broker": "mock",
+    "market_observation": "read-only",
+    "live_execution": False,
+}
 assert payload["mode"] == "paper"
 assert payload["broker"] == "mock"
 assert payload["market_observation"] == "read-only"
@@ -85,6 +98,8 @@ receipt = {
     "observed_source_sha": identity["source_sha"],
     "exact_match": identity["source_sha"] == EXPECTED_SHA.lower(),
     "runtime_identity": identity,
+    "product_identity": product_identity,
+    "execution_boundary": payload["execution_boundary"],
     "runtime_safety": {
         "mode": payload["mode"],
         "broker": payload["broker"],
@@ -96,9 +111,9 @@ receipt = {
     "capital_truth": capital_truth,
     "execution_authorized": False,
     "truth": (
-        "This Playwright receipt proves exact runtime/source identity plus the "
-        "paper-only TruthMode decision receipts. It does not prove or grant "
-        "live-money execution authority."
+        "This Playwright receipt proves exact runtime/source identity, the stable "
+        "Sleep Wealth race identity, and the current paper execution boundary as "
+        "separate facts. It does not prove or grant live-money execution authority."
     ),
 }
 
