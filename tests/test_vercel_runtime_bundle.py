@@ -86,6 +86,9 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "broker/crypto_sandbox.py" in packaged
     assert "backend/pump_live_box_server.py" in packaged
     assert "backend/pump_sandbox_receipts.py" in packaged
+    assert "backend/vybe_proof.py" in packaged
+    assert "integrations/vybe_mcp.py" in packaged
+    assert "race/opportunity_evidence.py" in packaged
     assert "gate/pump_practice_graduation.py" in packaged
 
 
