@@ -302,16 +302,6 @@ class ProviderDispatcher:
             if self.solana is None:
                 raise ValueError("Solana provider is not configured")
             return self.solana.config.network
-        if provider == "vybe-solana-mcp":
-            if self.vybe is None:
-                raise ValueError("Vybe Solana MCP provider is not configured")
-            return (
-                self.vybe.config.provider_fingerprint,
-                _resource_fingerprint({"action": action, "payload": payload}),
-                None,
-                None,
-            )
-
         if provider == "cash-app-pay":
             if self.cash_app_pay is None:
                 raise ValueError("Cash App Pay provider is not configured")
@@ -340,6 +330,16 @@ class ProviderDispatcher:
             else:
                 resource = _resource_fingerprint(payload)
             return account_fingerprint, resource, None, None
+
+        if provider == "vybe-solana-mcp":
+            if self.vybe is None:
+                raise ValueError("Vybe Solana MCP provider is not configured")
+            return (
+                self.vybe.config.provider_fingerprint,
+                _resource_fingerprint({"action": action, "payload": payload}),
+                None,
+                None,
+            )
 
         if provider == "cash-app-pay":
             if self.cash_app_pay is None:
