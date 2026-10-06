@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -87,7 +87,7 @@ def _result_payload(result: object) -> object:
 @dataclass(frozen=True, slots=True)
 class VybeMcpConfig:
     endpoint: str = DEFAULT_VYBE_MCP_ENDPOINT
-    bearer_token: str | None = None
+    bearer_token: str | None = field(default=None, repr=False)
     environment: str = VYBE_ENVIRONMENT
 
     def __post_init__(self) -> None:
