@@ -9,6 +9,7 @@ from integrations.vybe_mcp import (
     VybeMcpClient,
     VybeMcpConfig,
 )
+from mcp_gateway.providers import get_provider_manifest
 from race.opportunity_evidence import opportunity_evidence_receipt
 
 
@@ -173,3 +174,13 @@ def test_vybe_batch_reads_are_locally_allowlisted():
             "query-vybe-api-batch",
             {"path": "/v4/trading/swap", "body": {"wallets": ["x"]}},
         )
+
+
+def test_vybe_provider_manifest_exposes_only_sleepwealth_read_actions():
+    manifest = get_provider_manifest("vybe-solana-mcp")
+
+    assert manifest.provider_class == "solana-intelligence-provider"
+    assert set(manifest.actions) == VYBE_READ_TOOLS
+    assert set(manifest.actions).isdisjoint(VYBE_EXCLUDED_TOOLS)
+    assert manifest.authority_required_actions == ()
+    assert manifest.money_moving_actions == ()
