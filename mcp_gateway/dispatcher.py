@@ -72,7 +72,14 @@ class ProviderDispatcher:
             "authority_issuance_exposed_over_mcp": False,
             "user_intent_issuance_exposed_over_mcp": False,
             "user_intent_receipts_authorize": False,
-            "user_intent_required_providers": ["vybe-solana-mcp"],
+            "user_intent_required_actions": {
+                manifest.provider: list(manifest.user_intent_required_actions)
+                for manifest in (
+                    get_provider_manifest(name)
+                    for name in ("github-control", "solana-rpc", "vybe-solana-mcp", "cash-app-pay")
+                )
+                if manifest.user_intent_required_actions
+            },
             "consequential_actions_require_product_authority": True,
         }
 
@@ -140,12 +147,12 @@ class ProviderDispatcher:
 
         user_intent_receipt_id: str | None = None
         user_intent_fingerprint: str | None = None
-        if provider == "vybe-solana-mcp":
+        if action in manifest.user_intent_required_actions:
             intent = command.get("user_intent_receipt")
             if not isinstance(intent, Mapping):
                 return self._blocked(
                     "MISSING_USER_INTENT",
-                    "Vybe/Solana reads require an explicit user-intent receipt",
+                    "requested provider capability requires an explicit user-intent receipt",
                 )
             intent_decision = validate_user_intent_receipt(
                 intent,
