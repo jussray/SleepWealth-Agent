@@ -22,6 +22,7 @@ from backend.pump_live_box_server import HTML as PUMP_LIVE_BOX_HTML
 from backend.pump_live_box_server import PumpLiveBoxSession
 from backend.runtime_identity import runtime_identity
 from backend.runtime_server import RuntimeIdentityHandler
+from backend.vybe_proof import deployed_vybe_proof
 
 
 _PUMP_LIVE_BOX_PREFIX = "/pump-live-box"
@@ -183,6 +184,26 @@ class handler(RuntimeIdentityHandler):
         if pump_path is not None:
             with practice_state_identity(self.headers.get("x-vercel-oidc-token")):
                 return self._serve_pump_get(pump_path)
+        if parsed.path == "/internal/vybe-proof":
+            try:
+                status, payload = asyncio.run(deployed_vybe_proof())
+            except (RuntimeError, ValueError) as exc:
+                status, payload = (
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {
+                        "status": "blocked",
+                        "classification": "VYBE_PROOF_ERROR",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                        "provider": "vybe-solana-mcp",
+                        "authorizes": False,
+                        "allocation_authorized": False,
+                        "execution_authorized": False,
+                        "money_moving": False,
+                        "raw_market_data_exposed": False,
+                    },
+                )
+            return self._send_json(payload, status)
+
         asset = mom8_asset_response(parsed.path)
         if asset is not None:
             content_type, body = asset

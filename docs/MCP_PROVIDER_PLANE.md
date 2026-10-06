@@ -74,6 +74,26 @@ The opportunity-evidence receipt can feed either race engine as evidence, but it
 
 Runtime OAuth remains a deployment secret. Set `SLEEPWEALTH_VYBE_MCP_ENABLED=true` and provide `SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN`; the token is passed only to the outbound MCP transport and is never accepted in a Sleep Wealth MCP command payload or included in receipts.
 
+## Vercel Vybe proof runtime
+
+The public Sleep Wealth Vercel bundle does **not** expose the full MCP provider gateway. It packages only the reviewed read-only Vybe client plus opportunity-evidence code for one bounded deployment proof.
+
+The internal proof route is `GET /internal/vybe-proof`.
+
+Rules:
+
+- preview-only by default; production refuses unless `SLEEPWEALTH_VYBE_PROOF_ALLOW_PRODUCTION=true`
+- requires `SLEEPWEALTH_VYBE_PROOF_ENABLED=true`
+- requires `SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN` in runtime secret storage
+- executes one fixed documented token-details read after first validating the endpoint contract
+- returns fingerprints, observation time, and the non-authorizing opportunity-evidence receipt
+- never returns raw market data
+- never exposes the bearer token
+- never packages or exposes the Sleep Wealth MCP transaction/payment dispatcher
+- never grants allocation, transaction, payment, signing, or execution authority
+
+This route exists only to prove that the deployed source can reach the authorized Vybe MCP session and bind the live observation to exact evidence. It is not a public analytics proxy.
+
 ## Cash App Pay
 
 Cash App Pay is represented according to its supported developer model: customer-approved merchant payments, not arbitrary peer-to-peer Cash App balance control.

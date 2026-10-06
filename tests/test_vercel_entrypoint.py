@@ -108,3 +108,44 @@ def test_pump_live_box_browser_calls_stay_inside_the_namespaced_surface():
     assert "fetch('api/proposals'" in html
     assert "fetch('/api/wallet')" not in html
     assert "fetch('/api/proposals'" not in html
+
+
+def test_vybe_proof_route_stays_namespaced_and_uses_compact_receipt(monkeypatch):
+    from api import index
+
+    async def fake_proof():
+        return 200, {
+            "status": "ok",
+            "classification": "VERIFIED_LIVE_READ",
+            "provider": "vybe-solana-mcp",
+            "provider_fingerprint": "a" * 64,
+            "result_fingerprint": "b" * 64,
+            "authorizes": False,
+            "allocation_authorized": False,
+            "execution_authorized": False,
+            "money_moving": False,
+            "raw_market_data_exposed": False,
+        }
+
+    monkeypatch.setattr(index, "deployed_vybe_proof", fake_proof)
+    seen = {}
+
+    class FakeHandler:
+        path = "/internal/vybe-proof"
+        headers = {}
+
+        def _restore_sleepwealth_path(self):
+            return None
+
+        def _send_json(self, payload, status=200):
+            seen["payload"] = payload
+            seen["status"] = int(status)
+            return "served"
+
+    result = index.handler.do_GET(FakeHandler())
+
+    assert result == "served"
+    assert seen["status"] == 200
+    assert seen["payload"]["classification"] == "VERIFIED_LIVE_READ"
+    assert seen["payload"]["execution_authorized"] is False
+    assert seen["payload"]["raw_market_data_exposed"] is False
