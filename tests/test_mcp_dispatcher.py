@@ -820,4 +820,12 @@ async def test_mcp_server_exposes_only_capabilities_continuity_and_dispatch(tmp_
     assert capabilities["authority_issuance_exposed_over_mcp"] is False
     assert capabilities["user_intent_issuance_exposed_over_mcp"] is False
     assert capabilities["user_intent_receipts_authorize"] is False
-    assert capabilities["user_intent_required_providers"] == ["vybe-solana-mcp"]
+    assert capabilities["user_intent_required_actions"] == {
+        "vybe-solana-mcp": [
+            "list-endpoints",
+            "search-endpoints",
+            "get-endpoint",
+            "query-vybe-api",
+            "query-vybe-api-batch",
+        ]
+    }
