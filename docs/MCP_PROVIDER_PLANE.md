@@ -49,6 +49,23 @@ The repository's current paper/simulation ceiling is enforced at dispatch: `broa
 
 ## Vybe Solana intelligence
 
+Vybe is **user-intent-routed**. A live OAuth session, continuity cookie, available provider capability, or race strategy may not independently trigger a Vybe read.
+
+Before an allowlisted Vybe action reaches the provider, the trusted product control plane must supply a short-lived `sleepwealth-user-intent-v1` receipt that binds:
+
+- running source SHA
+- caller fingerprint
+- subject fingerprint
+- provider and environment
+- exact Vybe action
+- exact query/resource fingerprint
+- SHA-256 fingerprint of the user's explicit request
+
+Raw user text is not stored in the receipt. Intent receipts are authenticated with a trust key that is separate from product-authority keys. They carry `authorizes=false`, `allocation_authorized=false`, and `execution_authorized=false`.
+
+**Intent selects the workflow. Intent does not authorize the outcome.** Repository/provider rules remain stronger boundaries.
+
+
 Solana MCP by Vybe is integrated as a separate **read-only intelligence provider**, not as a replacement for the direct `solana-rpc` adapter.
 
 Sleep Wealth allowlists only:
@@ -78,7 +95,7 @@ Runtime OAuth remains a deployment secret. Set `SLEEPWEALTH_VYBE_MCP_ENABLED=tru
 
 The public Sleep Wealth Vercel bundle does **not** expose the full MCP provider gateway. It packages only the reviewed read-only Vybe client plus opportunity-evidence code for one bounded deployment proof.
 
-The internal proof route is `GET /internal/vybe-proof`.
+The internal proof route is `GET /internal/vybe-proof`. It is a deployment diagnostic, not a user-facing analytics workflow; user-facing Vybe reads must pass the user-intent gate above.
 
 Rules:
 
