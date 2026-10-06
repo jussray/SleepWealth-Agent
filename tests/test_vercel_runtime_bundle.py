@@ -88,6 +88,10 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "backend/pump_sandbox_receipts.py" in packaged
     assert "backend/vybe_proof.py" in packaged
     assert "integrations/vybe_mcp.py" in packaged
+    assert "execution/sandbox_money.py" in packaged
+    assert "authority/money_movement.py" in packaged
+    assert "authority/runtime.py" in packaged
+    assert "evidence/model.py" in packaged
     assert "race/opportunity_evidence.py" in packaged
     assert "gate/pump_practice_graduation.py" in packaged
 
@@ -110,6 +114,28 @@ def test_runtime_import_closure_rejects_missing_first_party_dependency():
         validate_runtime_import_closure(root, incomplete)
 
 
+def test_runtime_import_closure_rejects_missing_relative_package_dependency():
+    root = Path(__file__).resolve().parents[1]
+    incomplete = tuple(
+        path for path in RUNTIME_FILES if path != "execution/sandbox_money.py"
+    )
+
+    assert "execution/sandbox_money.py" in missing_runtime_imports(root, incomplete)
+    with pytest.raises(RuntimeError, match="sandbox_money"):
+        validate_runtime_import_closure(root, incomplete)
+
+
+def test_runtime_import_closure_requires_package_initializers():
+    root = Path(__file__).resolve().parents[1]
+    incomplete = tuple(
+        path for path in RUNTIME_FILES if path != "authority/__init__.py"
+    )
+
+    assert "authority/__init__.py" in missing_runtime_imports(root, incomplete)
+    with pytest.raises(RuntimeError, match="authority/__init__"):
+        validate_runtime_import_closure(root, incomplete)
+
+
 def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     output = tmp_path / "runtime"
@@ -117,8 +143,13 @@ def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
     package_runtime(root, output, source_sha=source_sha)
 
     monkeypatch.syspath_prepend(str(output))
+    first_party_roots = {
+        Path(path).parts[0]
+        for path in RUNTIME_FILES
+        if path.endswith(".py")
+    }
     for name in list(__import__("sys").modules):
-        if name == "api" or name.startswith("api.") or name == "backend" or name.startswith("backend."):
+        if any(name == root or name.startswith(root + ".") for root in first_party_roots):
             __import__("sys").modules.pop(name, None)
 
     imported = __import__("api.index", fromlist=["handler"])
