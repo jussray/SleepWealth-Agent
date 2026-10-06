@@ -96,11 +96,67 @@ def _base_command(*, provider, environment, action, cookie, payload, authority=N
 
 
 @pytest.mark.asyncio
-async def test_solana_mainnet_broadcast_requires_exact_authority_and_replay_is_blocked(tmp_path):
+async def test_solana_devnet_broadcast_requires_exact_authority_and_replay_is_blocked(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["method"] == "sendTransaction"
-        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "sig-live"})
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "sig-devnet"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        solana = SolanaRpcClient(
+            SolanaRpcConfig("https://rpc.example.test", "devnet"),
+            client=http_client,
+        )
+        public_key = "SignerPublicKey111"
+        transaction = base64.b64encode(b"signed-devnet-transaction").decode()
+        account_fp = solana.account_fingerprint(public_key)
+        resource_fp = transaction_fingerprint(transaction)
+        authority = _authority(
+            provider="solana-rpc",
+            environment="devnet",
+            account_fp=account_fp,
+            action="broadcast-signed-transaction",
+            resource_fp=resource_fp,
+            idem="sol-1",
+        )
+        cookie = _cookie(
+            provider="solana-rpc",
+            environment="devnet",
+            account_fp=account_fp,
+            authority_fp=authority["fingerprint"],
+            capability="broadcast-signed-transaction",
+        )
+        dispatcher = _dispatcher(tmp_path, solana=solana)
+        command = _base_command(
+            provider="solana-rpc",
+            environment="devnet",
+            action="broadcast-signed-transaction",
+            idem="sol-1",
+            cookie=cookie,
+            authority=authority,
+            payload={"public_key": public_key, "transaction_base64": transaction},
+        )
+        result = await dispatcher.dispatch(command)
+        replay = await dispatcher.dispatch(command)
+
+    assert result["ok"] is True
+    assert result["classification"] == "PROVIDER_ACTION_EXECUTED"
+    assert result["money_moving"] is True
+    assert result["provider_result"]["signature"] == "sig-devnet"
+    assert result["resource_fingerprint"] == resource_fp
+    assert replay["ok"] is False
+    assert replay["classification"] == "AUTHORITY_STATE_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_solana_mainnet_broadcast_is_blocked_by_paper_only_ceiling(tmp_path):
+    called = False
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(500)
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http_client:
@@ -118,7 +174,7 @@ async def test_solana_mainnet_broadcast_requires_exact_authority_and_replay_is_b
             account_fp=account_fp,
             action="broadcast-signed-transaction",
             resource_fp=resource_fp,
-            idem="sol-1",
+            idem="sol-live-blocked",
         )
         cookie = _cookie(
             provider="solana-rpc",
@@ -128,25 +184,21 @@ async def test_solana_mainnet_broadcast_requires_exact_authority_and_replay_is_b
             capability="broadcast-signed-transaction",
         )
         dispatcher = _dispatcher(tmp_path, solana=solana)
-        command = _base_command(
-            provider="solana-rpc",
-            environment="mainnet-beta",
-            action="broadcast-signed-transaction",
-            idem="sol-1",
-            cookie=cookie,
-            authority=authority,
-            payload={"public_key": public_key, "transaction_base64": transaction},
+        result = await dispatcher.dispatch(
+            _base_command(
+                provider="solana-rpc",
+                environment="mainnet-beta",
+                action="broadcast-signed-transaction",
+                idem="sol-live-blocked",
+                cookie=cookie,
+                authority=authority,
+                payload={"public_key": public_key, "transaction_base64": transaction},
+            )
         )
-        result = await dispatcher.dispatch(command)
-        replay = await dispatcher.dispatch(command)
 
-    assert result["ok"] is True
-    assert result["classification"] == "PROVIDER_ACTION_EXECUTED"
-    assert result["money_moving"] is True
-    assert result["provider_result"]["signature"] == "sig-live"
-    assert result["resource_fingerprint"] == resource_fp
-    assert replay["ok"] is False
-    assert replay["classification"] == "AUTHORITY_STATE_BLOCKED"
+    assert result["ok"] is False
+    assert result["classification"] == "PAPER_ONLY_CEILING"
+    assert called is False
 
 
 @pytest.mark.asyncio
@@ -161,14 +213,14 @@ async def test_solana_broadcast_without_authority_never_calls_rpc(tmp_path):
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http_client:
         solana = SolanaRpcClient(
-            SolanaRpcConfig("https://rpc.example.test", "mainnet-beta"),
+            SolanaRpcConfig("https://rpc.example.test", "devnet"),
             client=http_client,
         )
         public_key = "SignerPublicKey111"
         account_fp = solana.account_fingerprint(public_key)
         cookie = _cookie(
             provider="solana-rpc",
-            environment="mainnet-beta",
+            environment="devnet",
             account_fp=account_fp,
             capability="broadcast-signed-transaction",
         )
@@ -176,7 +228,7 @@ async def test_solana_broadcast_without_authority_never_calls_rpc(tmp_path):
         result = await dispatcher.dispatch(
             _base_command(
                 provider="solana-rpc",
-                environment="mainnet-beta",
+                environment="devnet",
                 action="broadcast-signed-transaction",
                 idem="sol-2",
                 cookie=cookie,
@@ -284,7 +336,7 @@ async def test_continuity_capability_source_subject_and_environment_drift_fail_b
 
 
 @pytest.mark.asyncio
-async def test_cash_app_payment_binds_customer_grant_amount_and_idempotency(tmp_path):
+async def test_cash_app_sandbox_payment_binds_customer_grant_amount_and_idempotency(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["payment"]["grant_id"] == "GRG-approved"
@@ -297,7 +349,7 @@ async def test_cash_app_payment_binds_customer_grant_amount_and_idempotency(tmp_
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http_client:
         cash = CashAppPayClient(
-            CashAppPayConfig("production"),
+            CashAppPayConfig("sandbox"),
             credentials=CashAppPayCredentials(
                 client_id="client-1",
                 key_id="key-1",
@@ -322,7 +374,7 @@ async def test_cash_app_payment_binds_customer_grant_amount_and_idempotency(tmp_
         resource_fp = cash.payment_resource_fingerprint(payment_body)
         authority = _authority(
             provider="cash-app-pay",
-            environment="production",
+            environment="sandbox",
             account_fp=account_fp,
             action="create-payment",
             resource_fp=resource_fp,
@@ -331,7 +383,7 @@ async def test_cash_app_payment_binds_customer_grant_amount_and_idempotency(tmp_
         )
         cookie = _cookie(
             provider="cash-app-pay",
-            environment="production",
+            environment="sandbox",
             account_fp=account_fp,
             authority_fp=authority["fingerprint"],
             capability="create-payment",
@@ -340,7 +392,7 @@ async def test_cash_app_payment_binds_customer_grant_amount_and_idempotency(tmp_
         result = await dispatcher.dispatch(
             _base_command(
                 provider="cash-app-pay",
-                environment="production",
+                environment="sandbox",
                 action="create-payment",
                 idem="cash-1",
                 cookie=cookie,
@@ -363,7 +415,7 @@ async def test_cash_app_payment_binds_customer_grant_amount_and_idempotency(tmp_
 
 
 @pytest.mark.asyncio
-async def test_cash_app_idempotency_drift_is_blocked_before_provider(tmp_path):
+async def test_cash_app_production_payment_is_blocked_by_paper_only_ceiling(tmp_path):
     called = False
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -375,6 +427,84 @@ async def test_cash_app_idempotency_drift_is_blocked_before_provider(tmp_path):
     async with httpx.AsyncClient(transport=transport) as http_client:
         cash = CashAppPayClient(
             CashAppPayConfig("production"),
+            credentials=CashAppPayCredentials(
+                client_id="client-1",
+                key_id="key-1",
+                secret="s" * 32,
+                region="PDX",
+            ),
+            client=http_client,
+        )
+        merchant = "merchant-1"
+        account_fp = cash.merchant_fingerprint(merchant)
+        payload = {
+            "merchant_id": merchant,
+            "grant_id": "GRG-approved",
+            "amount_cents": 500,
+            "reference_id": "order-live-blocked",
+            "idempotency_key": "cash-live-blocked",
+            "capture": True,
+        }
+        resource_fp = cash.payment_resource_fingerprint(
+            {
+                "idempotency_key": "cash-live-blocked",
+                "payment": {
+                    "amount": 500,
+                    "currency": "USD",
+                    "merchant_id": merchant,
+                    "grant_id": "GRG-approved",
+                    "reference_id": "order-live-blocked",
+                    "capture": True,
+                },
+            }
+        )
+        authority = _authority(
+            provider="cash-app-pay",
+            environment="production",
+            account_fp=account_fp,
+            action="create-payment",
+            resource_fp=resource_fp,
+            idem="cash-live-blocked",
+            amount=5.0,
+        )
+        cookie = _cookie(
+            provider="cash-app-pay",
+            environment="production",
+            account_fp=account_fp,
+            authority_fp=authority["fingerprint"],
+            capability="create-payment",
+        )
+        dispatcher = _dispatcher(tmp_path, cash=cash)
+        result = await dispatcher.dispatch(
+            _base_command(
+                provider="cash-app-pay",
+                environment="production",
+                action="create-payment",
+                idem="cash-live-blocked",
+                cookie=cookie,
+                authority=authority,
+                payload=payload,
+            )
+        )
+
+    assert result["ok"] is False
+    assert result["classification"] == "PAPER_ONLY_CEILING"
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_cash_app_idempotency_drift_is_blocked_before_provider(tmp_path):
+    called = False
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        cash = CashAppPayClient(
+            CashAppPayConfig("sandbox"),
             credentials=CashAppPayCredentials(
                 client_id="client-1",
                 key_id="key-1",
@@ -408,7 +538,7 @@ async def test_cash_app_idempotency_drift_is_blocked_before_provider(tmp_path):
         )
         authority = _authority(
             provider="cash-app-pay",
-            environment="production",
+            environment="sandbox",
             account_fp=account_fp,
             action="create-payment",
             resource_fp=resource_fp,
@@ -417,7 +547,7 @@ async def test_cash_app_idempotency_drift_is_blocked_before_provider(tmp_path):
         )
         cookie = _cookie(
             provider="cash-app-pay",
-            environment="production",
+            environment="sandbox",
             account_fp=account_fp,
             authority_fp=authority["fingerprint"],
             capability="create-payment",
@@ -426,7 +556,7 @@ async def test_cash_app_idempotency_drift_is_blocked_before_provider(tmp_path):
         result = await dispatcher.dispatch(
             _base_command(
                 provider="cash-app-pay",
-                environment="production",
+                environment="sandbox",
                 action="create-payment",
                 idem="command-idem",
                 cookie=cookie,
