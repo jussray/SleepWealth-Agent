@@ -6,10 +6,12 @@ from typing import Mapping
 
 from integrations.cash_app_pay import CashAppPayClient
 from integrations.solana_rpc import SolanaRpcClient, transaction_fingerprint
+from integrations.vybe_mcp import VybeMcpClient
 from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import validate_product_action_authority
 from mcp_gateway.continuity import validate_continuity_cookie
 from mcp_gateway.providers import get_provider_manifest, provider_manifests
+from race.opportunity_evidence import opportunity_evidence_receipt
 
 
 def _resource_fingerprint(payload: Mapping[str, object]) -> str:
@@ -43,6 +45,7 @@ class ProviderDispatcher:
         ledger: ProductActionLedger,
         solana: SolanaRpcClient | None = None,
         cash_app_pay: CashAppPayClient | None = None,
+        vybe: VybeMcpClient | None = None,
     ) -> None:
         source_sha = str(source_sha or "").strip()
         if len(source_sha) < 7:
@@ -53,6 +56,7 @@ class ProviderDispatcher:
         self.ledger = ledger
         self.solana = solana
         self.cash_app_pay = cash_app_pay
+        self.vybe = vybe
 
     def capabilities(self) -> dict[str, object]:
         return {
@@ -273,7 +277,7 @@ class ProviderDispatcher:
                 "ledger_error": ledger_error,
             }
 
-        return {
+        response = {
             "ok": True,
             "classification": "PROVIDER_READ_EXECUTED",
             "provider": provider,
@@ -284,16 +288,38 @@ class ProviderDispatcher:
             "provider_result": result,
             "execution_authorized": False,
         }
+        if provider == "vybe-solana-mcp":
+            response["opportunity_evidence"] = opportunity_evidence_receipt(
+                provider=provider,
+                action=action,
+                resource_fingerprint=resource_fingerprint,
+                provider_result=result,
+            )
+        return response
 
     def _configured_environment(self, provider: str) -> str:
         if provider == "solana-rpc":
             if self.solana is None:
                 raise ValueError("Solana provider is not configured")
             return self.solana.config.network
+        if provider == "vybe-solana-mcp":
+            if self.vybe is None:
+                raise ValueError("Vybe Solana MCP provider is not configured")
+            return (
+                self.vybe.config.provider_fingerprint,
+                _resource_fingerprint({"action": action, "payload": payload}),
+                None,
+                None,
+            )
+
         if provider == "cash-app-pay":
             if self.cash_app_pay is None:
                 raise ValueError("Cash App Pay provider is not configured")
             return self.cash_app_pay.config.environment
+        if provider == "vybe-solana-mcp":
+            if self.vybe is None:
+                raise ValueError("Vybe Solana MCP provider is not configured")
+            return self.vybe.config.environment
         raise ValueError(f"no configured environment exists for provider {provider}")
 
     def _scope(
@@ -396,6 +422,10 @@ class ProviderDispatcher:
                 )
             if action == "get-signature-status":
                 return await self.solana.get_signature_status(str(payload["signature"]))
+
+        if provider == "vybe-solana-mcp":
+            assert self.vybe is not None
+            return await self.vybe.call_read_tool(action, payload)
 
         if provider == "cash-app-pay":
             assert self.cash_app_pay is not None
