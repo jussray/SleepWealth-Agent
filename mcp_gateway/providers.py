@@ -60,6 +60,28 @@ _PROVIDER_MANIFESTS = {
             "Broadcast accepts an already-signed transaction and binds authority to its SHA-256 fingerprint.",
         ),
     ),
+    "vybe-solana-mcp": ProviderManifest(
+        provider="vybe-solana-mcp",
+        provider_class="solana-intelligence-provider",
+        environments=("mainnet-readonly",),
+        actions=(
+            "list-endpoints",
+            "search-endpoints",
+            "get-endpoint",
+            "query-vybe-api",
+            "query-vybe-api-batch",
+        ),
+        authority_required_actions=(),
+        money_moving_actions=(),
+        customer_approval_actions=(),
+        external_signer_actions=(),
+        live_consequence_blocked_environments=(),
+        notes=(
+            "Vybe is a read-only Solana intelligence lane inside Sleep Wealth.",
+            "Transaction building and x402 payment are intentionally excluded from dispatch.",
+            "Observed remote tool schemas are fingerprinted so capability drift renews evidence.",
+        ),
+    ),
     "cash-app-pay": ProviderManifest(
         provider="cash-app-pay",
         provider_class="payment-network",
