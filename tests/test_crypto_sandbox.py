@@ -27,6 +27,51 @@ async def test_crypto_sandbox_is_paper_only_and_emits_receipt_markers():
 
 
 @pytest.mark.asyncio
+async def test_crypto_sandbox_implements_full_capability_surface_without_live_authority():
+    broker = CryptoSandboxBroker(initial_cash=100.0)
+    await broker.connect()
+
+    matrix = broker.capability_matrix()
+    for capability in ("launch", "mint", "wallet", "trade", "spend", "transfer"):
+        assert matrix[capability]["implemented"] is True
+        assert matrix[capability]["mode"] == "sandbox"
+    assert matrix["live_authority"] is False
+
+    launch = await broker.launch_asset("MOM8", "MOM OF 8")
+    assert launch["status"] == "launched"
+    assert launch["real_money"] is False
+    assert launch["live_execution"] is False
+
+    mint = await broker.mint_asset("MOM8", 20)
+    assert mint["status"] == "minted"
+    assert mint["balance"] == pytest.approx(20.0)
+
+    wallet = await broker.wallet()
+    assert wallet["positions"]["MOM8"] == pytest.approx(20.0)
+    assert wallet["launched_assets"]["MOM8"]["status"] == "launched"
+
+    broker.set_market_price("TEST", 0.50)
+    trade = await broker.trade("TEST", 10, "buy")
+    assert trade["status"] == "filled"
+    assert trade["real_money"] is False
+
+    spend = await broker.spend(5, "sandbox listing fee")
+    assert spend["status"] == "spent"
+    assert spend["cash_remaining"] == pytest.approx(90.0)
+    assert spend["real_money"] is False
+
+    transfer = await broker.transfer_asset("MOM8", 5, "SANDBOX-WALLET-2")
+    assert transfer["status"] == "transferred"
+    assert transfer["balance"] == pytest.approx(15.0)
+    assert transfer["real_money"] is False
+    assert transfer["destination_wallet_id"] == "SANDBOX-WALLET-2"
+
+    for receipt in (launch, mint, spend, transfer):
+        assert receipt["continuity_cookie"].startswith("crypto-sandbox-capability:")
+        assert len(receipt["continuity_fingerprint"]) == 64
+
+
+@pytest.mark.asyncio
 async def test_crypto_sandbox_rejects_non_crypto_orders():
     broker = CryptoSandboxBroker()
     await broker.connect()
