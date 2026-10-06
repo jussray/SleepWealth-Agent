@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identity_ref": "identity/mom8-public-token.json",
   "readiness_ref": "identity/mom8-launch-readiness.json",
   "public_name": "MOM OF 8",
@@ -28,6 +28,15 @@
       "proof-first public story",
       "not derivative of another token brand"
     ]
+  },
+  "capabilities": {
+    "launch": true,
+    "mint": true,
+    "wallet": true,
+    "trade": true,
+    "spend": true,
+    "transfer": true,
+    "mode": "sandbox"
   },
   "continuity": {
     "parent_fingerprint": "MOM8::prelaunch-brand-readiness::v1",
