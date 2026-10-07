@@ -283,27 +283,13 @@ def test_get_cannot_start_or_logout_oauth(monkeypatch):
 
     monkeypatch.setattr(index, "begin_authorization", fake_begin)
     monkeypatch.setattr(index, "clear_oauth_cookies", fake_clear)
-
-    class FakeHandler:
-        headers = {}
-
-        def _restore_sleepwealth_path(self):
-            return None
-
-        def _serve_pump_get(self, _relative_path):
-            raise AssertionError
-
-        def _send_json(self, payload, status=200):
-            return {"payload": payload, "status": int(status)}
-
-        def _send_mom8_asset(self, _content_type, _body):
-            raise AssertionError
+    monkeypatch.setattr(index.RuntimeIdentityHandler, "do_GET", lambda _self: "fallback")
 
     for path in ("/connect/vybe/start", "/connect/vybe/logout"):
-        handler = FakeHandler()
+        handler = object.__new__(index.handler)
         handler.path = path
-        result = index.handler.do_GET(handler)
-        assert isinstance(result, dict)
-        assert result["status"] == 404
+        handler.headers = {}
+        result = handler.do_GET()
+        assert result == "fallback"
 
     assert called == {"begin": 0, "clear": 0}
