@@ -339,6 +339,8 @@ class ProviderDispatcher:
                 action=action,
                 resource_fingerprint=resource_fingerprint,
                 provider_result=result,
+                human_permission_grant_id=human_permission_grant_id,
+                human_permission_scope_fingerprint=human_permission_scope_fingerprint,
             )
         return response
 
