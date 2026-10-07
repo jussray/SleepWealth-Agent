@@ -234,48 +234,6 @@ class handler(RuntimeIdentityHandler):
     def do_GET(self):
         self._restore_sleepwealth_path()
         parsed = urlparse(self.path)
-        if parsed.path == "/connect/vybe/start":
-            try:
-                config = self._oauth_config()
-                origin = str(self.headers.get("origin") or "").rstrip("/")
-                if origin != config.public_origin:
-                    raise PermissionError("OAuth consent POST origin is not trusted")
-                form = self._read_form_object()
-                if "yes" not in form.get("approve", []):
-                    raise PermissionError("explicit human capability approval is required")
-                prepare_write = "yes" in form.get("prepare_write", [])
-                location, preauth_cookie = begin_authorization(
-                    config,
-                    prepare_write=prepare_write,
-                )
-                return self._temporary_redirect(
-                    location,
-                    cookies=(preauth_cookie,),
-                )
-            except (
-                httpx.HTTPError,
-                PermissionError,
-                RuntimeError,
-                UnicodeDecodeError,
-                ValueError,
-            ) as exc:
-                return self._send_json(
-                    {
-                        "status": "blocked",
-                        "classification": "VYBE_OAUTH_START_BLOCKED",
-                        "reason": f"{type(exc).__name__}: {exc}",
-                        "provider": "vybe-solana-mcp",
-                        "execution_authorized": False,
-                    },
-                    HTTPStatus.BAD_REQUEST,
-                )
-
-        if parsed.path == "/connect/vybe/logout":
-            return self._temporary_redirect(
-                "/connect/vybe",
-                cookies=clear_oauth_cookies(),
-            )
-
         pump_path = pump_live_box_relative_path(parsed.path)
         if pump_path is not None:
             with practice_state_identity(self.headers.get("x-vercel-oidc-token")):
@@ -415,6 +373,49 @@ class handler(RuntimeIdentityHandler):
     def do_POST(self):
         self._restore_sleepwealth_path()
         parsed = urlparse(self.path)
+
+        if parsed.path == "/connect/vybe/start":
+            try:
+                config = self._oauth_config()
+                origin = str(self.headers.get("origin") or "").rstrip("/")
+                if origin != config.public_origin:
+                    raise PermissionError("OAuth consent POST origin is not trusted")
+                form = self._read_form_object()
+                if "yes" not in form.get("approve", []):
+                    raise PermissionError("explicit human capability approval is required")
+                prepare_write = "yes" in form.get("prepare_write", [])
+                location, preauth_cookie = begin_authorization(
+                    config,
+                    prepare_write=prepare_write,
+                )
+                return self._temporary_redirect(
+                    location,
+                    cookies=(preauth_cookie,),
+                )
+            except (
+                httpx.HTTPError,
+                PermissionError,
+                RuntimeError,
+                UnicodeDecodeError,
+                ValueError,
+            ) as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "classification": "VYBE_OAUTH_START_BLOCKED",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                        "provider": "vybe-solana-mcp",
+                        "execution_authorized": False,
+                    },
+                    HTTPStatus.BAD_REQUEST,
+                )
+
+        if parsed.path == "/connect/vybe/logout":
+            return self._temporary_redirect(
+                "/connect/vybe",
+                cookies=clear_oauth_cookies(),
+            )
+
         pump_path = pump_live_box_relative_path(parsed.path)
         if pump_path is not None:
             with practice_state_identity(self.headers.get("x-vercel-oidc-token")):
