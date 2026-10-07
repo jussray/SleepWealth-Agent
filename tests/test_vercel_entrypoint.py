@@ -1,3 +1,4 @@
+import importlib
 import os
 from contextlib import contextmanager
 
@@ -10,7 +11,10 @@ def test_vercel_entrypoint_uses_runtime_identity_paper_handler(monkeypatch):
     monkeypatch.delenv("SLEEPWEALTH_APPROVAL_STATE", raising=False)
     monkeypatch.delenv("SLEEPWEALTH_APPROVAL_STATE_SCOPE", raising=False)
 
-    from api.index import handler
+    from api import index
+
+    index = importlib.reload(index)
+    handler = index.handler
 
     assert issubclass(handler, RuntimeIdentityHandler)
     assert os.environ["SLEEPWEALTH_AUDIT_LOG"] == "/tmp/sleepwealth-audit.log"

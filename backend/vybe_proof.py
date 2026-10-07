@@ -45,7 +45,12 @@ def _blocked(reason: str, *, classification: str = "BLOCKED") -> dict[str, objec
     }
 
 
-async def deployed_vybe_proof() -> tuple[int, dict[str, object]]:
+async def deployed_vybe_proof(
+    *,
+    bearer_token: str | None = None,
+    human_permission_grant: dict[str, object] | None = None,
+    allow_session_production: bool = False,
+) -> tuple[int, dict[str, object]]:
     """Run one bounded, preview-safe Vybe read and return proof metadata only.
 
     This endpoint is deliberately not a general proxy. It binds to one documented
@@ -54,8 +59,10 @@ async def deployed_vybe_proof() -> tuple[int, dict[str, object]]:
     """
 
     vercel_env = os.getenv("VERCEL_ENV", "").strip().lower()
-    if vercel_env == "production" and not _bool_env(
-        "SLEEPWEALTH_VYBE_PROOF_ALLOW_PRODUCTION"
+    if (
+        vercel_env == "production"
+        and not allow_session_production
+        and not _bool_env("SLEEPWEALTH_VYBE_PROOF_ALLOW_PRODUCTION")
     ):
         return 403, _blocked(
             "Vybe deployment proof is preview-only unless a separate production override is set",
@@ -68,7 +75,10 @@ async def deployed_vybe_proof() -> tuple[int, dict[str, object]]:
             classification="VYBE_PROOF_DISABLED",
         )
 
-    token = os.getenv("SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN", "").strip()
+    token = str(
+        bearer_token
+        or os.getenv("SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN", "")
+    ).strip()
     if not token:
         return 503, _blocked(
             "Vybe OAuth bearer token is not configured in runtime secret storage",
@@ -99,11 +109,25 @@ async def deployed_vybe_proof() -> tuple[int, dict[str, object]]:
         "payload": {"path": _VYBE_PROOF_PATH, "query": {}},
     }
     resource_fingerprint = _fingerprint(resource)
+    grant_id = None
+    grant_scope_fingerprint = None
+    if isinstance(human_permission_grant, dict):
+        grant_id = human_permission_grant.get("grant_id")
+        grant_scope_fingerprint = human_permission_grant.get("scope_fingerprint")
+
     evidence = opportunity_evidence_receipt(
         provider="vybe-solana-mcp",
         action="query-vybe-api",
         resource_fingerprint=resource_fingerprint,
         provider_result=observation,
+        human_permission_grant_id=(
+            str(grant_id) if grant_id is not None else None
+        ),
+        human_permission_scope_fingerprint=(
+            str(grant_scope_fingerprint)
+            if grant_scope_fingerprint is not None
+            else None
+        ),
     )
 
     return 200, {
@@ -125,4 +149,12 @@ async def deployed_vybe_proof() -> tuple[int, dict[str, object]]:
         "execution_authorized": False,
         "money_moving": False,
         "raw_market_data_exposed": False,
+        "human_permission_grant_id": (
+            str(grant_id) if grant_id is not None else None
+        ),
+        "human_permission_scope_fingerprint": (
+            str(grant_scope_fingerprint)
+            if grant_scope_fingerprint is not None
+            else None
+        ),
     }

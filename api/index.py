@@ -3,8 +3,10 @@
 import asyncio
 import json
 import os
+
+import httpx
 from http import HTTPStatus
-from urllib.parse import parse_qsl, urlencode, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 
 # Vercel functions may write only to temporary storage. These receipts remain
 # paper-simulation evidence and do not create persistent trading or account
@@ -22,6 +24,15 @@ from backend.pump_live_box_server import HTML as PUMP_LIVE_BOX_HTML
 from backend.pump_live_box_server import PumpLiveBoxSession
 from backend.runtime_identity import runtime_identity
 from backend.runtime_server import RuntimeIdentityHandler
+from backend.vybe_oauth import (
+    begin_authorization,
+    clear_oauth_cookies,
+    config_from_env,
+    consent_html,
+    finish_authorization,
+    session_context,
+    session_status,
+)
 from backend.vybe_proof import deployed_vybe_proof
 
 
@@ -99,6 +110,49 @@ class handler(RuntimeIdentityHandler):
         if not isinstance(payload, dict):
             raise TypeError("request body must be a JSON object")
         return payload
+
+    def _request_origin(self) -> str:
+        proto = str(self.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
+        host = str(
+            self.headers.get("x-forwarded-host")
+            or self.headers.get("host")
+            or ""
+        ).split(",")[0].strip()
+        if not host:
+            raise ValueError("request host is required")
+        return f"{proto}://{host}".rstrip("/")
+
+    def _read_form_object(self) -> dict[str, list[str]]:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length else b""
+        return parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+
+    def _temporary_redirect(
+        self,
+        location: str,
+        *,
+        cookies: tuple[str, ...] = (),
+    ) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        for cookie in cookies:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+
+    def _send_oauth_html(self, html: str, *, status=HTTPStatus.OK) -> None:
+        body = html.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _oauth_config(self):
+        return config_from_env(self._request_origin())
 
     def _serve_pump_get(self, relative_path: str) -> None:
         if relative_path == "":
@@ -184,6 +238,112 @@ class handler(RuntimeIdentityHandler):
         if pump_path is not None:
             with practice_state_identity(self.headers.get("x-vercel-oidc-token")):
                 return self._serve_pump_get(pump_path)
+        if parsed.path == "/connect/vybe":
+            try:
+                return self._send_oauth_html(consent_html(self._oauth_config()))
+            except (RuntimeError, ValueError) as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "classification": "VYBE_OAUTH_NOT_CONFIGURED",
+                        "reason": str(exc),
+                        "provider": "vybe-solana-mcp",
+                        "execution_authorized": False,
+                    },
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+
+        if parsed.path == "/connect/vybe/callback":
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            if query.get("error"):
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "classification": "VYBE_OAUTH_DENIED",
+                        "reason": str(query.get("error_description", query["error"])[0]),
+                        "provider": "vybe-solana-mcp",
+                        "execution_authorized": False,
+                    },
+                    HTTPStatus.BAD_REQUEST,
+                )
+            try:
+                code = str(query.get("code", [""])[0]).strip()
+                state = str(query.get("state", [""])[0]).strip()
+                if not code or not state:
+                    raise ValueError("OAuth callback requires code and state")
+                payload, cookies = finish_authorization(
+                    self._oauth_config(),
+                    code=code,
+                    state=state,
+                    cookie_header=self.headers.get("cookie"),
+                )
+                if payload.get("access_token_exposed") is not False:
+                    raise RuntimeError("OAuth callback attempted to expose token material")
+                return self._temporary_redirect(
+                    "/connect/vybe/status",
+                    cookies=cookies,
+                )
+            except (httpx.HTTPError, PermissionError, RuntimeError, ValueError) as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "classification": "VYBE_OAUTH_CALLBACK_BLOCKED",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                        "provider": "vybe-solana-mcp",
+                        "execution_authorized": False,
+                    },
+                    HTTPStatus.BAD_REQUEST,
+                )
+
+        if parsed.path == "/connect/vybe/status":
+            try:
+                return self._send_json(
+                    session_status(
+                        self._oauth_config(),
+                        cookie_header=self.headers.get("cookie"),
+                    )
+                )
+            except (RuntimeError, ValueError) as exc:
+                return self._send_json(
+                    {
+                        "status": "disconnected",
+                        "classification": "VYBE_OAUTH_SESSION_UNAVAILABLE",
+                        "reason": str(exc),
+                        "provider": "vybe-solana-mcp",
+                        "execution_authorized": False,
+                    },
+                    HTTPStatus.UNAUTHORIZED,
+                )
+
+        if parsed.path == "/connect/vybe/proof":
+            try:
+                config = self._oauth_config()
+                session, grant = session_context(
+                    config,
+                    cookie_header=self.headers.get("cookie"),
+                )
+                token = str(session.get("access_token", ""))
+                status, payload = asyncio.run(
+                    deployed_vybe_proof(
+                        bearer_token=token,
+                        human_permission_grant=grant,
+                        allow_session_production=True,
+                    )
+                )
+                return self._send_json(payload, status)
+            except (RuntimeError, ValueError) as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "classification": "VYBE_OAUTH_PROOF_BLOCKED",
+                        "reason": str(exc),
+                        "provider": "vybe-solana-mcp",
+                        "raw_market_data_exposed": False,
+                        "execution_authorized": False,
+                    },
+                    HTTPStatus.UNAUTHORIZED,
+                )
+
         if parsed.path == "/internal/vybe-proof":
             try:
                 status, payload = asyncio.run(deployed_vybe_proof())
@@ -213,6 +373,49 @@ class handler(RuntimeIdentityHandler):
     def do_POST(self):
         self._restore_sleepwealth_path()
         parsed = urlparse(self.path)
+
+        if parsed.path == "/connect/vybe/start":
+            try:
+                config = self._oauth_config()
+                origin = str(self.headers.get("origin") or "").rstrip("/")
+                if origin != config.public_origin:
+                    raise PermissionError("OAuth consent POST origin is not trusted")
+                form = self._read_form_object()
+                if "yes" not in form.get("approve", []):
+                    raise PermissionError("explicit human capability approval is required")
+                prepare_write = "yes" in form.get("prepare_write", [])
+                location, preauth_cookie = begin_authorization(
+                    config,
+                    prepare_write=prepare_write,
+                )
+                return self._temporary_redirect(
+                    location,
+                    cookies=(preauth_cookie,),
+                )
+            except (
+                httpx.HTTPError,
+                PermissionError,
+                RuntimeError,
+                UnicodeDecodeError,
+                ValueError,
+            ) as exc:
+                return self._send_json(
+                    {
+                        "status": "blocked",
+                        "classification": "VYBE_OAUTH_START_BLOCKED",
+                        "reason": f"{type(exc).__name__}: {exc}",
+                        "provider": "vybe-solana-mcp",
+                        "execution_authorized": False,
+                    },
+                    HTTPStatus.BAD_REQUEST,
+                )
+
+        if parsed.path == "/connect/vybe/logout":
+            return self._temporary_redirect(
+                "/connect/vybe",
+                cookies=clear_oauth_cookies(),
+            )
+
         pump_path = pump_live_box_relative_path(parsed.path)
         if pump_path is not None:
             with practice_state_identity(self.headers.get("x-vercel-oidc-token")):

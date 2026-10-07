@@ -86,6 +86,7 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "broker/crypto_sandbox.py" in packaged
     assert "backend/pump_live_box_server.py" in packaged
     assert "backend/pump_sandbox_receipts.py" in packaged
+    assert "backend/vybe_oauth.py" in packaged
     assert "backend/vybe_proof.py" in packaged
     assert "authority/money_movement.py" in packaged
     assert "authority/__init__.py" not in packaged
@@ -93,6 +94,7 @@ def test_runtime_bundle_excludes_live_broker_and_server_paths():
     assert "race/__init__.py" not in packaged
     assert "execution/sandbox_money.py" in packaged
     assert "integrations/vybe_mcp.py" in packaged
+    assert "mcp_gateway/human_permission.py" in packaged
     assert "race/opportunity_evidence.py" in packaged
     assert "gate/pump_practice_graduation.py" in packaged
 
@@ -139,17 +141,29 @@ def test_packaged_entrypoint_imports_from_bundle_only(tmp_path, monkeypatch):
         for path in RUNTIME_FILES
         if path.endswith(".py") and "/" in path
     }
-    for name in list(__import__("sys").modules):
+    sys = __import__("sys")
+    original_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name.split(".", 1)[0] in first_party
+    }
+    for name in list(sys.modules):
         if name.split(".", 1)[0] in first_party:
-            __import__("sys").modules.pop(name, None)
+            sys.modules.pop(name, None)
 
-    imported = __import__("api.index", fromlist=["handler"])
-    assert imported.handler is not None
-    identity = __import__("backend.runtime_identity", fromlist=["runtime_identity"])
-    receipt = identity.runtime_identity({})
-    assert receipt["source_sha"] == source_sha
-    assert receipt["source_provider"] == "vercel-bundle"
-    assert receipt["execution_authorized"] is False
+    try:
+        imported = __import__("api.index", fromlist=["handler"])
+        assert imported.handler is not None
+        identity = __import__("backend.runtime_identity", fromlist=["runtime_identity"])
+        receipt = identity.runtime_identity({})
+        assert receipt["source_sha"] == source_sha
+        assert receipt["source_provider"] == "vercel-bundle"
+        assert receipt["execution_authorized"] is False
+    finally:
+        for name in list(sys.modules):
+            if name.split(".", 1)[0] in first_party:
+                sys.modules.pop(name, None)
+        sys.modules.update(original_modules)
 
 
 def test_vercel_config_pins_the_function_runtime_without_static_build_override():
