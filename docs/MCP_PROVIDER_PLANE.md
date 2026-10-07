@@ -45,7 +45,9 @@ The adapter has an external-signer boundary. It never accepts a private key. A b
 
 Networks are explicit: `devnet`, `testnet`, or `mainnet-beta`. The requested environment must equal the network configured in the running provider client. The RPC endpoint must use HTTPS outside loopback.
 
-The repository's current paper/simulation ceiling is enforced at dispatch: `broadcast-signed-transaction` is allowed only on `devnet` or `testnet`. A `mainnet-beta` client may be used for non-authorizing observation/simulation/status reads, but the MCP gateway refuses mainnet broadcast with `PAPER_ONLY_CEILING` even if a structurally valid product-authority receipt is supplied.
+Direct Solana read/simulation/status actions (`get-balance`, `simulate-signed-transaction`, and `get-signature-status`) also require a bounded standing human read grant. Connecting an RPC endpoint does not authorize autonomous reads by itself.
+
+The repository's current paper/simulation ceiling is enforced at dispatch: `broadcast-signed-transaction` is allowed only on `devnet` or `testnet`. A `mainnet-beta` client may be used for human-approved observation/simulation/status reads, but the MCP gateway refuses mainnet broadcast with `PAPER_ONLY_CEILING` even if a structurally valid product-authority receipt is supplied.
 
 ## Vybe Solana intelligence
 
