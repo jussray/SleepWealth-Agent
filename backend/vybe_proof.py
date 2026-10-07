@@ -42,14 +42,6 @@ def _blocked(reason: str, *, classification: str = "BLOCKED") -> dict[str, objec
         "execution_authorized": False,
         "money_moving": False,
         "raw_market_data_exposed": False,
-        "human_permission_grant_id": (
-            str(grant_id) if grant_id is not None else None
-        ),
-        "human_permission_scope_fingerprint": (
-            str(grant_scope_fingerprint)
-            if grant_scope_fingerprint is not None
-            else None
-        ),
     }
 
 
@@ -157,4 +149,12 @@ async def deployed_vybe_proof(
         "execution_authorized": False,
         "money_moving": False,
         "raw_market_data_exposed": False,
+        "human_permission_grant_id": (
+            str(grant_id) if grant_id is not None else None
+        ),
+        "human_permission_scope_fingerprint": (
+            str(grant_scope_fingerprint)
+            if grant_scope_fingerprint is not None
+            else None
+        ),
     }
