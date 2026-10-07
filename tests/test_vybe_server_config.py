@@ -51,5 +51,6 @@ def test_vybe_runtime_token_is_kept_inside_provider_client(monkeypatch, tmp_path
     rendered = str(capabilities)
     assert "runtime-oauth-token" not in rendered
     assert "p" * 32 not in rendered
-    assert "build-vybe-transaction" not in rendered
+    assert "build-vybe-transaction" in rendered
     assert "pay-with-x402" not in rendered
+    assert "mcp:write" not in rendered

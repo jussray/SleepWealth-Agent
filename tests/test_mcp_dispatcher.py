@@ -11,7 +11,7 @@ from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import issue_product_action_authority
 from mcp_gateway.continuity import issue_continuity_cookie
 from mcp_gateway.dispatcher import ProviderDispatcher
-from mcp_gateway.human_permission import issue_human_read_grant
+from mcp_gateway.human_permission import issue_human_capability_grant, issue_human_read_grant
 from mcp_gateway.server import build_mcp_server
 
 COOKIE_KEY = "c" * 32
@@ -76,9 +76,11 @@ def _grant(
     environment="mainnet-readonly",
     allowed_actions=("query-vybe-api",),
     allowed_resource_prefixes=("/v4/",),
+    allowed_effects=("read",),
     source_sha=SOURCE_SHA,
 ):
-    return issue_human_read_grant(
+    issuer = issue_human_read_grant if tuple(allowed_effects) == ("read",) else issue_human_capability_grant
+    kwargs = dict(
         issuer_id="permission-issuer",
         issuer_key=PERMISSION_KEY,
         source_sha=source_sha,
@@ -90,6 +92,9 @@ def _grant(
         allowed_resource_prefixes=allowed_resource_prefixes,
         human_approval_fingerprint=HUMAN_FP,
     )
+    if issuer is issue_human_capability_grant:
+        kwargs["allowed_effects"] = allowed_effects
+    return issuer(**kwargs)
 
 
 def _dispatcher(tmp_path, *, solana=None, cash=None, vybe=None):
@@ -656,8 +661,9 @@ class FakeVybe:
         self.config = VybeMcpConfig()
         self.calls = []
 
-    async def call_read_tool(self, action, payload):
+    async def call_tool(self, action, payload):
         self.calls.append((action, dict(payload)))
+        effect = "prepare-write" if action == "build-vybe-transaction" else "read"
         return {
             "provider": "vybe-solana-mcp",
             "environment": "mainnet-readonly",
@@ -666,7 +672,11 @@ class FakeVybe:
             "result_fingerprint": "d" * 64,
             "observed_at": "2026-10-06T10:30:00+00:00",
             "result": {"status": 200, "body": {"value": 42}},
+            "capability_effect": effect,
+            "write_prepared": effect == "prepare-write",
             "execution_authorized": False,
+            "signing_authorized": False,
+            "broadcast_authorized": False,
             "allocation_authorized": False,
             "money_moving": False,
         }
@@ -715,7 +725,7 @@ async def test_vybe_read_dispatch_uses_standing_human_permission(tmp_path):
     assert second["classification"] == "PROVIDER_READ_EXECUTED"
     assert first["execution_authorized"] is False
     assert first["account_fingerprint"] == account_fp
-    assert first["human_permission_grant_id"].startswith("HRG-")
+    assert first["human_permission_grant_id"].startswith("HCG-")
     assert first["human_permission_scope_fingerprint"] == second["human_permission_scope_fingerprint"]
     assert first["human_permission_authorizes_execution"] is False
     assert vybe.calls == [
@@ -788,7 +798,7 @@ async def test_vybe_human_permission_blocks_resource_outside_scope(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_vybe_transaction_builder_is_not_a_sleepwealth_dispatch_action(tmp_path):
+async def test_vybe_prepare_write_requires_prepare_write_effect(tmp_path):
     vybe = FakeVybe()
     account_fp = vybe.config.provider_fingerprint
     cookie = _cookie(
@@ -798,20 +808,80 @@ async def test_vybe_transaction_builder_is_not_a_sleepwealth_dispatch_action(tmp
         capability="build-vybe-transaction",
     )
     dispatcher = _dispatcher(tmp_path, vybe=vybe)
+    read_only_grant = _grant(
+        allowed_actions=("build-vybe-transaction",),
+        allowed_resource_prefixes=("/v4/trading/",),
+        allowed_effects=("read",),
+    )
 
-    result = await dispatcher.dispatch(
+    blocked = await dispatcher.dispatch(
         _base_command(
             provider="vybe-solana-mcp",
             environment="mainnet-readonly",
             action="build-vybe-transaction",
             cookie=cookie,
-            payload={"path": "/v4/trading/swap", "body": {}},
+            payload={"path": "/v4/trading/swap", "body": {"quote": "q1"}},
+            permission=read_only_grant,
         )
     )
 
-    assert result["ok"] is False
-    assert result["classification"] == "ACTION_CONFLICT"
+    assert blocked["ok"] is False
+    assert blocked["classification"] == "HUMAN_PERMISSION_EFFECT_CONFLICT"
     assert vybe.calls == []
+
+
+@pytest.mark.asyncio
+async def test_vybe_prepare_write_uses_human_grant_but_never_executes(tmp_path):
+    vybe = FakeVybe()
+    account_fp = vybe.config.provider_fingerprint
+    cookie = _cookie(
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        account_fp=account_fp,
+        capability="build-vybe-transaction",
+    )
+    dispatcher = _dispatcher(tmp_path, vybe=vybe)
+    grant = _grant(
+        allowed_actions=("build-vybe-transaction",),
+        allowed_resource_prefixes=("/v4/trading/",),
+        allowed_effects=("prepare-write",),
+    )
+
+    first = await dispatcher.dispatch(
+        _base_command(
+            provider="vybe-solana-mcp",
+            environment="mainnet-readonly",
+            action="build-vybe-transaction",
+            cookie=cookie,
+            payload={"path": "/v4/trading/swap", "body": {"quote": "q1"}},
+            permission=grant,
+        )
+    )
+    second = await dispatcher.dispatch(
+        _base_command(
+            provider="vybe-solana-mcp",
+            environment="mainnet-readonly",
+            action="build-vybe-transaction",
+            cookie=cookie,
+            payload={"path": "/v4/trading/swap", "body": {"quote": "q2"}},
+            permission=grant,
+        )
+    )
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["classification"] == "PROVIDER_WRITE_PREPARED"
+    assert first["capability_effect"] == "prepare-write"
+    assert first["write_preparation_authorized"] is True
+    assert first["execution_authorized"] is False
+    assert first["signing_authorized"] is False
+    assert first["broadcast_authorized"] is False
+    assert first["human_permission_authorizes_execution"] is False
+    assert first["human_permission_scope_fingerprint"] == second["human_permission_scope_fingerprint"]
+    assert vybe.calls == [
+        ("build-vybe-transaction", {"path": "/v4/trading/swap", "body": {"quote": "q1"}}),
+        ("build-vybe-transaction", {"path": "/v4/trading/swap", "body": {"quote": "q2"}}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -835,7 +905,8 @@ async def test_mcp_server_exposes_only_capabilities_continuity_and_dispatch(tmp_
     assert capabilities["source_sha"] == SOURCE_SHA
     assert capabilities["authority_issuance_exposed_over_mcp"] is False
     assert capabilities["human_permission_issuance_exposed_over_mcp"] is False
-    assert capabilities["human_read_grants_authorize_execution"] is False
+    assert capabilities["human_capability_grants_authorize_execution"] is False
+    assert capabilities["human_capability_effects"] == ["read", "prepare-write"]
     assert capabilities["human_permission_required_actions"] == {
         "solana-rpc": [
             "get-balance",
@@ -848,5 +919,6 @@ async def test_mcp_server_exposes_only_capabilities_continuity_and_dispatch(tmp_
             "get-endpoint",
             "query-vybe-api",
             "query-vybe-api-batch",
+            "build-vybe-transaction",
         ]
     }

@@ -84,7 +84,7 @@ These are not suggestions. Tests enforce them.
 | `ibkr` | no | no | disabled compatibility stub; not an execution adapter |
 | `alpaca_readonly` | yes, live account GET only | no | source implementation for privacy-preserving Alpaca live-account observation |
 | `ibkr_readonly` | local TWS/Gateway observation | no | source implementation; client read-only request does not prove provider-side read-only enforcement |
-| `vybe-solana-mcp` | yes, live Solana analytics | no | read-only intelligence lane; schema/result fingerprints + non-authorizing opportunity evidence |
+| `vybe-solana-mcp` | live Solana reads + unsigned write preparation | no | human-granted `read` / `prepare-write`; signing, broadcast, x402, and money movement stay excluded |
 
 The Alpaca observer is intentionally **not** registered in `broker/factory.py`: an
 observation object must not be substitutable for an execution broker. It reads the
@@ -101,7 +101,7 @@ registering it in `broker/factory.py`, proving broker-side kill/reconciliation b
 and separately enabling real-money authority. A read-only observer never satisfies those
 execution requirements.
 
-Vybe is deliberately treated the same way at the authority boundary: live Solana data may inform the race, but an observation receipt cannot authorize capital allocation or execution. The local Vybe allowlist excludes transaction construction and x402 payment even if the remote MCP advertises them.
+Vybe uses the same authority separation: a human capability grant may allow live Solana reads and unsigned transaction preparation, but neither can authorize capital allocation or execution. Signing, broadcast, x402 payment, and money movement remain outside the local Vybe capability grant.
 
 ## CLI
 

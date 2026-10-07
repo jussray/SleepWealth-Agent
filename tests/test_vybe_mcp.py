@@ -4,7 +4,10 @@ from types import SimpleNamespace
 import pytest
 
 from integrations.vybe_mcp import (
+    VYBE_ALLOWED_TOOLS,
     VYBE_EXCLUDED_TOOLS,
+    VYBE_OAUTH_SCOPES,
+    VYBE_PREPARE_WRITE_TOOLS,
     VYBE_READ_TOOLS,
     VybeMcpClient,
     VybeMcpConfig,
@@ -107,13 +110,39 @@ async def test_vybe_read_bridge_returns_fingerprinted_non_authorizing_observatio
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool_name", sorted(VYBE_EXCLUDED_TOOLS))
-async def test_vybe_transaction_and_payment_surfaces_are_not_dispatchable(tool_name):
-    fake = FakeClient([_tool(tool_name)], {"ignored": True})
+async def test_vybe_prepare_write_returns_unsigned_nonexecuting_result():
+    tools = [
+        _tool("build-vybe-transaction", read_only=False, destructive=True),
+    ]
+    fake = FakeClient(tools, {"status": 200, "body": {"transaction": "unsigned-base64"}})
     client = VybeMcpClient(VybeMcpConfig(), client_factory=_factory(fake))
 
-    with pytest.raises(ValueError, match="read-only allowlist"):
-        await client.call_read_tool(tool_name, {})
+    result = await client.call_tool(
+        "build-vybe-transaction",
+        {"path": "/v4/trading/swap", "body": {"quote": "test"}},
+    )
+
+    assert result["capability_effect"] == "prepare-write"
+    assert result["write_prepared"] is True
+    assert result["execution_authorized"] is False
+    assert result["signing_authorized"] is False
+    assert result["broadcast_authorized"] is False
+    assert result["money_moving"] is False
+    assert fake.calls == [
+        (
+            "build-vybe-transaction",
+            {"path": "/v4/trading/swap", "body": {"quote": "test"}},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vybe_x402_remains_excluded():
+    fake = FakeClient([_tool("pay-with-x402")], {"ignored": True})
+    client = VybeMcpClient(VybeMcpConfig(), client_factory=_factory(fake))
+
+    with pytest.raises(ValueError, match="local allowlist"):
+        await client.call_tool("pay-with-x402", {})
 
     assert fake.calls == []
 
@@ -176,11 +205,13 @@ def test_vybe_batch_reads_are_locally_allowlisted():
         )
 
 
-def test_vybe_provider_manifest_exposes_only_sleepwealth_read_actions():
+def test_vybe_provider_manifest_exposes_read_and_unsigned_prepare_write_only():
     manifest = get_provider_manifest("vybe-solana-mcp")
 
     assert manifest.provider_class == "solana-intelligence-provider"
-    assert set(manifest.actions) == VYBE_READ_TOOLS
+    assert set(manifest.actions) == VYBE_ALLOWED_TOOLS
+    assert set(manifest.write_preparation_actions) == VYBE_PREPARE_WRITE_TOOLS
     assert set(manifest.actions).isdisjoint(VYBE_EXCLUDED_TOOLS)
     assert manifest.authority_required_actions == ()
     assert manifest.money_moving_actions == ()
+    assert VYBE_OAUTH_SCOPES == ("openid", "email", "mcp:read", "mcp:write")

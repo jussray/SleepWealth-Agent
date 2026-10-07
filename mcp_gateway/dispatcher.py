@@ -11,7 +11,7 @@ from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import validate_product_action_authority
 from mcp_gateway.continuity import validate_continuity_cookie
 from mcp_gateway.providers import get_provider_manifest, provider_manifests
-from mcp_gateway.human_permission import validate_human_read_grant
+from mcp_gateway.human_permission import validate_human_capability_grant
 from race.opportunity_evidence import opportunity_evidence_receipt
 
 
@@ -71,7 +71,8 @@ class ProviderDispatcher:
             "credentials_in_mcp_payloads": False,
             "authority_issuance_exposed_over_mcp": False,
             "human_permission_issuance_exposed_over_mcp": False,
-            "human_read_grants_authorize_execution": False,
+            "human_capability_grants_authorize_execution": False,
+            "human_capability_effects": ["read", "prepare-write"],
             "human_permission_required_actions": {
                 manifest.provider: list(manifest.human_permission_required_actions)
                 for manifest in (
@@ -147,15 +148,20 @@ class ProviderDispatcher:
 
         human_permission_grant_id: str | None = None
         human_permission_scope_fingerprint: str | None = None
+        capability_effect = (
+            "prepare-write"
+            if action in manifest.write_preparation_actions
+            else "read"
+        )
         if action in manifest.human_permission_required_actions:
             grant = command.get("human_permission_grant")
             if not isinstance(grant, Mapping):
                 return self._blocked(
                     "MISSING_HUMAN_PERMISSION",
-                    "requested provider capability requires an explicit human read grant",
+                    "requested provider capability requires an explicit human capability grant",
                 )
             resource_path = payload.get("path")
-            permission_decision = validate_human_read_grant(
+            permission_decision = validate_human_capability_grant(
                 grant,
                 trusted_keys=self.permission_keys,
                 source_sha=self.source_sha,
@@ -164,6 +170,7 @@ class ProviderDispatcher:
                 provider=provider,
                 environment=environment,
                 action=action,
+                required_effect=capability_effect,
                 resource_path=str(resource_path) if resource_path is not None else None,
             )
             if not permission_decision.accepted:
@@ -321,14 +328,22 @@ class ProviderDispatcher:
 
         response = {
             "ok": True,
-            "classification": "PROVIDER_READ_EXECUTED",
+            "classification": (
+                "PROVIDER_WRITE_PREPARED"
+                if capability_effect == "prepare-write"
+                else "PROVIDER_READ_EXECUTED"
+            ),
             "provider": provider,
             "environment": environment,
             "action": action,
+            "capability_effect": capability_effect,
             "resource_fingerprint": resource_fingerprint,
             "account_fingerprint": account_fingerprint,
             "provider_result": result,
+            "write_preparation_authorized": capability_effect == "prepare-write",
             "execution_authorized": False,
+            "signing_authorized": False,
+            "broadcast_authorized": False,
             "human_permission_grant_id": human_permission_grant_id,
             "human_permission_scope_fingerprint": human_permission_scope_fingerprint,
             "human_permission_authorizes_execution": False,
@@ -472,7 +487,7 @@ class ProviderDispatcher:
 
         if provider == "vybe-solana-mcp":
             assert self.vybe is not None
-            return await self.vybe.call_read_tool(action, payload)
+            return await self.vybe.call_tool(action, payload)
 
         if provider == "cash-app-pay":
             assert self.cash_app_pay is not None

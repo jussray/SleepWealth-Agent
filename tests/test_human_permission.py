@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
 from mcp_gateway.human_permission import (
+    issue_human_capability_grant,
     issue_human_read_grant,
+    validate_human_capability_grant,
     validate_human_read_grant,
 )
 
@@ -92,3 +94,85 @@ def test_human_read_grant_tamper_fails_closed():
 
     assert decision.accepted is False
     assert decision.classification == "INVALID_HUMAN_PERMISSION"
+
+
+def test_human_capability_grant_supports_read_and_prepare_write_without_execution():
+    grant = issue_human_capability_grant(
+        issuer_id="permission-issuer",
+        issuer_key=KEY,
+        source_sha=SOURCE_SHA,
+        caller_fingerprint=CALLER_FP,
+        subject_fingerprint=SUBJECT_FP,
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        allowed_actions=("query-vybe-api", "build-vybe-transaction"),
+        allowed_resource_prefixes=("/v4/",),
+        allowed_effects=("read", "prepare-write"),
+        human_approval_fingerprint=HUMAN_FP,
+    )
+
+    read = validate_human_capability_grant(
+        grant,
+        trusted_keys={"permission-issuer": KEY},
+        source_sha=SOURCE_SHA,
+        caller_fingerprint=CALLER_FP,
+        subject_fingerprint=SUBJECT_FP,
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        action="query-vybe-api",
+        required_effect="read",
+        resource_path="/v4/token/a",
+    )
+    write = validate_human_capability_grant(
+        grant,
+        trusted_keys={"permission-issuer": KEY},
+        source_sha=SOURCE_SHA,
+        caller_fingerprint=CALLER_FP,
+        subject_fingerprint=SUBJECT_FP,
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        action="build-vybe-transaction",
+        required_effect="prepare-write",
+        resource_path="/v4/trading/swap",
+    )
+
+    assert read.accepted is True
+    assert write.accepted is True
+    assert grant["provider_read_authorized"] is True
+    assert grant["provider_prepare_write_authorized"] is True
+    assert grant["execution_authorized"] is False
+    assert grant["signing_authorized"] is False
+    assert grant["broadcast_authorized"] is False
+    assert grant["money_moving_authorized"] is False
+    assert grant["payment_authorized"] is False
+
+
+def test_read_only_grant_cannot_prepare_write():
+    grant = issue_human_read_grant(
+        issuer_id="permission-issuer",
+        issuer_key=KEY,
+        source_sha=SOURCE_SHA,
+        caller_fingerprint=CALLER_FP,
+        subject_fingerprint=SUBJECT_FP,
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        allowed_actions=("query-vybe-api", "build-vybe-transaction"),
+        allowed_resource_prefixes=("/v4/",),
+        human_approval_fingerprint=HUMAN_FP,
+    )
+
+    decision = validate_human_capability_grant(
+        grant,
+        trusted_keys={"permission-issuer": KEY},
+        source_sha=SOURCE_SHA,
+        caller_fingerprint=CALLER_FP,
+        subject_fingerprint=SUBJECT_FP,
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        action="build-vybe-transaction",
+        required_effect="prepare-write",
+        resource_path="/v4/trading/swap",
+    )
+
+    assert decision.accepted is False
+    assert decision.classification == "HUMAN_PERMISSION_EFFECT_CONFLICT"
