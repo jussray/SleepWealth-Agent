@@ -177,6 +177,7 @@ def issue_human_capability_grant(
         "standing_capability_grant": True,
         "provider_read_authorized": "read" in effects,
         "provider_prepare_write_authorized": "prepare-write" in effects,
+        "transaction_construction_authorized": "prepare-write" in effects,
         "allocation_authorized": False,
         "execution_authorized": False,
         "money_moving_authorized": False,
@@ -258,6 +259,9 @@ def validate_human_capability_grant(
         and set(str(value).strip().lower() for value in effects).issubset(ALLOWED_EFFECTS)
         and receipt.get("human_authorization_present") is True
         and receipt.get("standing_capability_grant") is True
+        and receipt.get("transaction_construction_authorized") is (
+            "prepare-write" in {str(value).strip().lower() for value in effects}
+        )
         and receipt.get("allocation_authorized") is False
         and receipt.get("execution_authorized") is False
         and receipt.get("money_moving_authorized") is False
