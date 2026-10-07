@@ -9,8 +9,8 @@ _REQUIRED = {
     "SLEEPWEALTH_MCP_COOKIE_KEY": "c" * 32,
     "SLEEPWEALTH_MCP_AUTHORITY_ISSUER": "authority-issuer",
     "SLEEPWEALTH_MCP_AUTHORITY_KEY": "a" * 32,
-    "SLEEPWEALTH_MCP_INTENT_ISSUER": "intent-issuer",
-    "SLEEPWEALTH_MCP_INTENT_KEY": "i" * 32,
+    "SLEEPWEALTH_MCP_PERMISSION_ISSUER": "permission-issuer",
+    "SLEEPWEALTH_MCP_PERMISSION_KEY": "p" * 32,
     "SLEEPWEALTH_MCP_LEDGER_KEY": "l" * 32,
 }
 
@@ -46,10 +46,10 @@ def test_vybe_runtime_token_is_kept_inside_provider_client(monkeypatch, tmp_path
     assert dispatcher.vybe is not None
     assert dispatcher.vybe.config.environment == "mainnet-readonly"
     assert dispatcher.vybe.config.bearer_token == "runtime-oauth-token"
-    assert dispatcher.intent_keys == {"intent-issuer": "i" * 32}
+    assert dispatcher.permission_keys == {"permission-issuer": "p" * 32}
     capabilities = dispatcher.capabilities()
     rendered = str(capabilities)
     assert "runtime-oauth-token" not in rendered
-    assert "i" * 32 not in rendered
+    assert "p" * 32 not in rendered
     assert "build-vybe-transaction" not in rendered
     assert "pay-with-x402" not in rendered
