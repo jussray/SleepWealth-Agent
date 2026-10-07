@@ -72,6 +72,8 @@ def _cookie(
 
 def _grant(
     *,
+    provider="vybe-solana-mcp",
+    environment="mainnet-readonly",
     allowed_actions=("query-vybe-api",),
     allowed_resource_prefixes=("/v4/",),
     source_sha=SOURCE_SHA,
@@ -82,8 +84,8 @@ def _grant(
         source_sha=source_sha,
         caller_fingerprint=CALLER_FP,
         subject_fingerprint=SUBJECT_FP,
-        provider="vybe-solana-mcp",
-        environment="mainnet-readonly",
+        provider=provider,
+        environment=environment,
         allowed_actions=allowed_actions,
         allowed_resource_prefixes=allowed_resource_prefixes,
         human_approval_fingerprint=HUMAN_FP,
@@ -288,6 +290,12 @@ async def test_continuity_capability_source_subject_and_environment_drift_fail_b
         public_key = "PublicKey111"
         account_fp = solana.account_fingerprint(public_key)
         dispatcher = _dispatcher(tmp_path, solana=solana)
+        read_grant = _grant(
+            provider="solana-rpc",
+            environment="devnet",
+            allowed_actions=("get-balance",),
+            allowed_resource_prefixes=(),
+        )
 
         wrong_cap = _cookie(
             provider="solana-rpc",
@@ -302,6 +310,7 @@ async def test_continuity_capability_source_subject_and_environment_drift_fail_b
                 action="get-balance",
                 cookie=wrong_cap,
                 payload={"public_key": public_key},
+                permission=read_grant,
             )
         )
         assert cap_result["classification"] == "CAPABILITY_CONFLICT"
@@ -320,6 +329,7 @@ async def test_continuity_capability_source_subject_and_environment_drift_fail_b
                 action="get-balance",
                 cookie=old_source,
                 payload={"public_key": public_key},
+                permission=read_grant,
             )
         )
         assert source_result["classification"] == "SOURCE_SHA_CONFLICT"
@@ -338,6 +348,7 @@ async def test_continuity_capability_source_subject_and_environment_drift_fail_b
                 action="get-balance",
                 cookie=wrong_subject_cookie,
                 payload={"public_key": public_key},
+                permission=read_grant,
             )
         )
         assert subject_result["classification"] == "CONTINUITY_CONFLICT"
@@ -355,6 +366,7 @@ async def test_continuity_capability_source_subject_and_environment_drift_fail_b
                 action="get-balance",
                 cookie=devnet_cookie,
                 payload={"public_key": public_key},
+                permission=read_grant,
             )
         )
         assert env_result["classification"] == "PROVIDER_ENVIRONMENT_CONFLICT"
@@ -825,6 +837,11 @@ async def test_mcp_server_exposes_only_capabilities_continuity_and_dispatch(tmp_
     assert capabilities["human_permission_issuance_exposed_over_mcp"] is False
     assert capabilities["human_read_grants_authorize_execution"] is False
     assert capabilities["human_permission_required_actions"] == {
+        "solana-rpc": [
+            "get-balance",
+            "simulate-signed-transaction",
+            "get-signature-status",
+        ],
         "vybe-solana-mcp": [
             "list-endpoints",
             "search-endpoints",
