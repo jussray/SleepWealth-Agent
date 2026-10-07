@@ -56,8 +56,8 @@ def opportunity_evidence_receipt(
     permission_subject: dict[str, object] = {}
     if human_permission_grant_id is not None or human_permission_scope_fingerprint is not None:
         grant_id = str(human_permission_grant_id or "").strip()
-        if not grant_id.startswith("HRG-"):
-            raise ValueError("human_permission_grant_id must be a valid HRG id")
+        if not grant_id.startswith(("HRG-", "HCG-")):
+            raise ValueError("human_permission_grant_id must be a valid human grant id")
         permission_subject = {
             "human_permission_grant_id": grant_id,
             "human_permission_scope_fingerprint": _sha256(
