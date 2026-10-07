@@ -49,41 +49,42 @@ Direct Solana read/simulation/status actions (`get-balance`, `simulate-signed-tr
 
 The repository's current paper/simulation ceiling is enforced at dispatch: `broadcast-signed-transaction` is allowed only on `devnet` or `testnet`. A `mainnet-beta` client may be used for human-approved observation/simulation/status reads, but the MCP gateway refuses mainnet broadcast with `PAPER_ONLY_CEILING` even if a structurally valid product-authority receipt is supplied.
 
-## Vybe Solana intelligence
+## Vybe Solana capability lane
 
-Vybe is **human-permission-routed**. Connection, OAuth, continuity, provider availability, model preference, or race strategy do not independently authorize reads.
+Vybe is **human-permission-routed**. Connection, OAuth, continuity, provider availability, model preference, or race strategy do not independently authorize capabilities.
 
 The required sequence is:
 
-`human approval -> bounded standing read grant -> connected Vybe/Solana session -> autonomous reads inside grant scope`
+`human approval -> bounded standing capability grant -> OAuth mcp:read + mcp:write -> autonomous use inside grant scope`
 
-A trusted control plane issues `sleepwealth-human-read-grant-v1` only after explicit human authorization. The grant binds:
+A trusted control plane issues `sleepwealth-human-capability-grant-v1` only after explicit human authorization. The grant binds:
 
 - running source SHA
 - caller fingerprint
 - subject fingerprint
 - provider and environment
-- approved read actions
+- approved actions
 - approved resource/path prefixes
+- approved effects: `read` and/or `prepare-write`
 - human approval fingerprint
 - purpose
 - issue and expiry times
 
-The grant is **not bound to one exact query**. While it remains valid, Sleep Wealth may choose when to run multiple different reads inside the approved action/resource scope without asking again for every query.
+The grant is **not bound to one exact request**. While valid, Sleep Wealth may choose when to perform multiple reads or unsigned write-preparation actions inside the approved envelope without asking again for each call.
 
-The grant cannot widen itself. It explicitly keeps:
+The capability grant explicitly cannot authorize:
 
-- `execution_authorized=false`
-- `allocation_authorized=false`
-- `money_moving_authorized=false`
-- `transaction_construction_authorized=false`
-- `payment_authorized=false`
+- signing
+- broadcast
+- settlement
+- x402 payment
+- capital allocation
+- money movement
+- live execution
 
-**Human authorization comes first. Autonomy exists only inside the granted read envelope. Connection alone grants nothing.**
+**Human authorization comes first. Autonomy exists only inside the granted capability envelope. OAuth connection alone grants nothing.**
 
-Solana MCP by Vybe remains a separate **read-only intelligence provider**, not a replacement for the direct `solana-rpc` adapter.
-
-Sleep Wealth allowlists only:
+Sleep Wealth locally allowlists these Vybe read actions:
 
 - `list-endpoints`
 - `search-endpoints`
@@ -91,21 +92,27 @@ Sleep Wealth allowlists only:
 - `query-vybe-api`
 - `query-vybe-api-batch`
 
-The remote MCP also advertises transaction construction and x402 guidance. Sleep Wealth intentionally excludes `build-vybe-transaction` and `pay-with-x402` from local dispatch. A human read grant cannot add excluded provider actions.
+It additionally allowlists one `prepare-write` action:
 
-Every Vybe read records:
+- `build-vybe-transaction`
+
+The builder may only use the locally approved Vybe transaction-builder paths and returns an **unsigned** payload. The adapter never signs or broadcasts it. `pay-with-x402` remains excluded from dispatch.
+
+OAuth is expected to request `openid email mcp:read mcp:write`; the local human capability grant remains the controlling authorization boundary after connection.
+
+Every Vybe action records:
 
 - canonical provider endpoint fingerprint
 - observed remote tool-schema fingerprint
-- exact Sleep Wealth query/resource fingerprint
+- exact Sleep Wealth resource fingerprint
 - returned-result fingerprint
-- observation time
-- human read-grant ID and scope fingerprint
-- a non-authorizing `sw-opportunity-v1` continuity cookie
+- observation/preparation time
+- human capability-grant ID and scope fingerprint
+- capability effect (`read` or `prepare-write`)
 
-The opportunity-evidence receipt can feed either race engine as evidence, but it explicitly does not prove profitability, future returns, capital-allocation authority, transaction authority, or payment authority.
+Read evidence may feed either race engine as opportunity evidence. Prepared write payloads are not outcomes, executions, or profit evidence and do not authorize later signing/broadcast.
 
-Runtime OAuth remains a deployment secret. Set `SLEEPWEALTH_VYBE_MCP_ENABLED=true` and provide `SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN`; the token is passed only to the outbound MCP transport and is never accepted in a Sleep Wealth MCP command payload or included in receipts.
+Runtime OAuth remains deployment-secret material and is never accepted in Sleep Wealth MCP command payloads or included in receipts.
 
 
 ## Vercel Vybe proof runtime
