@@ -75,9 +75,9 @@ def build_dispatcher_from_env() -> ProviderDispatcher:
             raise RuntimeError(
                 "SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN is required when Vybe MCP is enabled"
             )
-        intent_issuer = _required_env("SLEEPWEALTH_MCP_PERMISSION_ISSUER")
-        intent_key = _required_env("SLEEPWEALTH_MCP_PERMISSION_KEY")
-        permission_keys[intent_issuer] = intent_key
+        permission_issuer = _required_env("SLEEPWEALTH_MCP_PERMISSION_ISSUER")
+        permission_key = _required_env("SLEEPWEALTH_MCP_PERMISSION_KEY")
+        permission_keys[permission_issuer] = permission_key
         vybe = VybeMcpClient(
             VybeMcpConfig(
                 endpoint=os.getenv(
