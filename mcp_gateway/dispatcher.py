@@ -11,7 +11,7 @@ from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import validate_product_action_authority
 from mcp_gateway.continuity import validate_continuity_cookie
 from mcp_gateway.providers import get_provider_manifest, provider_manifests
-from mcp_gateway.user_intent import validate_user_intent_receipt
+from mcp_gateway.human_permission import validate_human_read_grant
 from race.opportunity_evidence import opportunity_evidence_receipt
 
 
@@ -43,7 +43,7 @@ class ProviderDispatcher:
         source_sha: str,
         continuity_keys: Mapping[str, object],
         authority_keys: Mapping[str, object],
-        intent_keys: Mapping[str, object] | None = None,
+        permission_keys: Mapping[str, object] | None = None,
         ledger: ProductActionLedger,
         solana: SolanaRpcClient | None = None,
         cash_app_pay: CashAppPayClient | None = None,
@@ -55,7 +55,7 @@ class ProviderDispatcher:
         self.source_sha = source_sha
         self.continuity_keys = dict(continuity_keys)
         self.authority_keys = dict(authority_keys)
-        self.intent_keys = dict(intent_keys or {})
+        self.permission_keys = dict(permission_keys or {})
         self.ledger = ledger
         self.solana = solana
         self.cash_app_pay = cash_app_pay
@@ -70,15 +70,15 @@ class ProviderDispatcher:
             "continuity_cookies_authorize": False,
             "credentials_in_mcp_payloads": False,
             "authority_issuance_exposed_over_mcp": False,
-            "user_intent_issuance_exposed_over_mcp": False,
-            "user_intent_receipts_authorize": False,
-            "user_intent_required_actions": {
-                manifest.provider: list(manifest.user_intent_required_actions)
+            "human_permission_issuance_exposed_over_mcp": False,
+            "human_read_grants_authorize_execution": False,
+            "human_permission_required_actions": {
+                manifest.provider: list(manifest.human_permission_required_actions)
                 for manifest in (
                     get_provider_manifest(name)
                     for name in ("github-control", "solana-rpc", "vybe-solana-mcp", "cash-app-pay")
                 )
-                if manifest.user_intent_required_actions
+                if manifest.human_permission_required_actions
             },
             "consequential_actions_require_product_authority": True,
         }
@@ -145,33 +145,34 @@ class ProviderDispatcher:
         except (KeyError, TypeError, ValueError) as exc:
             return self._blocked("INVALID_SCOPE", str(exc))
 
-        user_intent_receipt_id: str | None = None
-        user_intent_fingerprint: str | None = None
-        if action in manifest.user_intent_required_actions:
-            intent = command.get("user_intent_receipt")
-            if not isinstance(intent, Mapping):
+        human_permission_grant_id: str | None = None
+        human_permission_scope_fingerprint: str | None = None
+        if action in manifest.human_permission_required_actions:
+            grant = command.get("human_permission_grant")
+            if not isinstance(grant, Mapping):
                 return self._blocked(
-                    "MISSING_USER_INTENT",
-                    "requested provider capability requires an explicit user-intent receipt",
+                    "MISSING_HUMAN_PERMISSION",
+                    "requested provider capability requires an explicit human read grant",
                 )
-            intent_decision = validate_user_intent_receipt(
-                intent,
-                trusted_keys=self.intent_keys,
+            resource_path = payload.get("path")
+            permission_decision = validate_human_read_grant(
+                grant,
+                trusted_keys=self.permission_keys,
                 source_sha=self.source_sha,
                 caller_fingerprint=caller_fingerprint,
                 subject_fingerprint=subject_fingerprint,
                 provider=provider,
                 environment=environment,
                 action=action,
-                resource_fingerprint=resource_fingerprint,
+                resource_path=str(resource_path) if resource_path is not None else None,
             )
-            if not intent_decision.accepted:
+            if not permission_decision.accepted:
                 return self._blocked(
-                    intent_decision.classification,
-                    intent_decision.reason,
+                    permission_decision.classification,
+                    permission_decision.reason,
                 )
-            user_intent_receipt_id = intent_decision.receipt_id
-            user_intent_fingerprint = intent_decision.intent_fingerprint
+            human_permission_grant_id = permission_decision.grant_id
+            human_permission_scope_fingerprint = permission_decision.scope_fingerprint
 
         cookie = command.get("continuity_cookie")
         if not isinstance(cookie, Mapping):
@@ -328,9 +329,9 @@ class ProviderDispatcher:
             "account_fingerprint": account_fingerprint,
             "provider_result": result,
             "execution_authorized": False,
-            "user_intent_receipt_id": user_intent_receipt_id,
-            "user_intent_fingerprint": user_intent_fingerprint,
-            "user_intent_authorizes": False,
+            "human_permission_grant_id": human_permission_grant_id,
+            "human_permission_scope_fingerprint": human_permission_scope_fingerprint,
+            "human_permission_authorizes_execution": False,
         }
         if provider == "vybe-solana-mcp":
             response["opportunity_evidence"] = opportunity_evidence_receipt(
