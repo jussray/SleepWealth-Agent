@@ -112,6 +112,7 @@ _PROVIDER_MANIFESTS = {
         actions=("create-customer-request", "create-payment", "retrieve-payment"),
         authority_required_actions=("create-customer-request", "create-payment"),
         human_permission_required_actions=(),
+        write_preparation_actions=(),
         money_moving_actions=("create-payment",),
         customer_approval_actions=("create-customer-request", "create-payment"),
         external_signer_actions=(),
