@@ -45,28 +45,43 @@ The adapter has an external-signer boundary. It never accepts a private key. A b
 
 Networks are explicit: `devnet`, `testnet`, or `mainnet-beta`. The requested environment must equal the network configured in the running provider client. The RPC endpoint must use HTTPS outside loopback.
 
-The repository's current paper/simulation ceiling is enforced at dispatch: `broadcast-signed-transaction` is allowed only on `devnet` or `testnet`. A `mainnet-beta` client may be used for non-authorizing observation/simulation/status reads, but the MCP gateway refuses mainnet broadcast with `PAPER_ONLY_CEILING` even if a structurally valid product-authority receipt is supplied.
+Direct Solana read/simulation/status actions (`get-balance`, `simulate-signed-transaction`, and `get-signature-status`) also require a bounded standing human read grant. Connecting an RPC endpoint does not authorize autonomous reads by itself.
+
+The repository's current paper/simulation ceiling is enforced at dispatch: `broadcast-signed-transaction` is allowed only on `devnet` or `testnet`. A `mainnet-beta` client may be used for human-approved observation/simulation/status reads, but the MCP gateway refuses mainnet broadcast with `PAPER_ONLY_CEILING` even if a structurally valid product-authority receipt is supplied.
 
 ## Vybe Solana intelligence
 
-Vybe is **user-intent-routed**. A live OAuth session, continuity cookie, available provider capability, or race strategy may not independently trigger a Vybe read.
+Vybe is **human-permission-routed**. Connection, OAuth, continuity, provider availability, model preference, or race strategy do not independently authorize reads.
 
-Before an allowlisted Vybe action reaches the provider, the trusted product control plane must supply a short-lived `sleepwealth-user-intent-v1` receipt that binds:
+The required sequence is:
+
+`human approval -> bounded standing read grant -> connected Vybe/Solana session -> autonomous reads inside grant scope`
+
+A trusted control plane issues `sleepwealth-human-read-grant-v1` only after explicit human authorization. The grant binds:
 
 - running source SHA
 - caller fingerprint
 - subject fingerprint
 - provider and environment
-- exact Vybe action
-- exact query/resource fingerprint
-- SHA-256 fingerprint of the user's explicit request
+- approved read actions
+- approved resource/path prefixes
+- human approval fingerprint
+- purpose
+- issue and expiry times
 
-Raw user text is not stored in the receipt. Intent receipts are authenticated with a trust key that is separate from product-authority keys. They carry `authorizes=false`, `allocation_authorized=false`, and `execution_authorized=false`.
+The grant is **not bound to one exact query**. While it remains valid, Sleep Wealth may choose when to run multiple different reads inside the approved action/resource scope without asking again for every query.
 
-**Intent selects the workflow. Intent does not authorize the outcome.** Repository/provider rules remain stronger boundaries.
+The grant cannot widen itself. It explicitly keeps:
 
+- `execution_authorized=false`
+- `allocation_authorized=false`
+- `money_moving_authorized=false`
+- `transaction_construction_authorized=false`
+- `payment_authorized=false`
 
-Solana MCP by Vybe is integrated as a separate **read-only intelligence provider**, not as a replacement for the direct `solana-rpc` adapter.
+**Human authorization comes first. Autonomy exists only inside the granted read envelope. Connection alone grants nothing.**
+
+Solana MCP by Vybe remains a separate **read-only intelligence provider**, not a replacement for the direct `solana-rpc` adapter.
 
 Sleep Wealth allowlists only:
 
@@ -76,7 +91,7 @@ Sleep Wealth allowlists only:
 - `query-vybe-api`
 - `query-vybe-api-batch`
 
-The remote MCP also advertises transaction construction and x402 guidance. Sleep Wealth intentionally excludes `build-vybe-transaction` and `pay-with-x402` from local dispatch. They cannot be reached by minting a broader continuity cookie because the provider manifest itself does not contain those actions.
+The remote MCP also advertises transaction construction and x402 guidance. Sleep Wealth intentionally excludes `build-vybe-transaction` and `pay-with-x402` from local dispatch. A human read grant cannot add excluded provider actions.
 
 Every Vybe read records:
 
@@ -85,17 +100,19 @@ Every Vybe read records:
 - exact Sleep Wealth query/resource fingerprint
 - returned-result fingerprint
 - observation time
+- human read-grant ID and scope fingerprint
 - a non-authorizing `sw-opportunity-v1` continuity cookie
 
-The opportunity-evidence receipt can feed either race engine as evidence, but it explicitly does not prove profitability, future returns, allocation authority, transaction authority, or payment authority.
+The opportunity-evidence receipt can feed either race engine as evidence, but it explicitly does not prove profitability, future returns, capital-allocation authority, transaction authority, or payment authority.
 
 Runtime OAuth remains a deployment secret. Set `SLEEPWEALTH_VYBE_MCP_ENABLED=true` and provide `SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN`; the token is passed only to the outbound MCP transport and is never accepted in a Sleep Wealth MCP command payload or included in receipts.
+
 
 ## Vercel Vybe proof runtime
 
 The public Sleep Wealth Vercel bundle does **not** expose the full MCP provider gateway. It packages only the reviewed read-only Vybe client plus opportunity-evidence code for one bounded deployment proof.
 
-The internal proof route is `GET /internal/vybe-proof`. It is a deployment diagnostic, not a user-facing analytics workflow; user-facing Vybe reads must pass the user-intent gate above.
+The internal proof route is `GET /internal/vybe-proof`. It is a deployment diagnostic, not a user-facing analytics workflow; user-facing Vybe reads must pass the standing human read-grant gate above.
 
 Rules:
 
@@ -162,6 +179,8 @@ Required MCP control-plane variables:
 - `SLEEPWEALTH_MCP_COOKIE_KEY`
 - `SLEEPWEALTH_MCP_AUTHORITY_ISSUER`
 - `SLEEPWEALTH_MCP_AUTHORITY_KEY`
+- `SLEEPWEALTH_MCP_PERMISSION_ISSUER`
+- `SLEEPWEALTH_MCP_PERMISSION_KEY`
 - `SLEEPWEALTH_MCP_LEDGER_KEY`
 
 Optional provider variables configure Solana RPC, Vybe Solana intelligence, and Cash App Pay. Secrets must be supplied by deployment secret storage. Never commit provider secrets, OAuth bearer tokens, or private keys.
