@@ -1,10 +1,8 @@
-# Sleep Wealth
+# SleepWealth
 
-Sleep Wealth is a governed **autonomous-strategy wealth race**. Two competing strategic engines explore, test, learn from, and allocate toward money-making opportunity lanes according to evidence and verified outcomes.
+A governed trading agent. The machine proposes; the human owns the ceiling.
 
-The current repository is market-heavy because stocks and crypto were the first implemented test lanes. They are capabilities inside Sleep Wealth, not its product definition. Products, services, software, partnerships, and other opportunity lanes belong to the same race only when their capability and outcome evidence is actually implemented and proven.
-
-Paper/mock execution is the **current execution and safety boundary**, not the identity of Sleep Wealth. The machine-readable product identity lives in `race/identity.py`; its product fingerprint stays stable when an execution boundary changes, while each competitor's strategy fingerprint renews when its strategy configuration changes. Continuity cookies are non-secret state markers and never grant authority.
+Paper/simulation execution only. Live account observation is being built as a separate evidence plane; live order execution remains disabled at both the CLI and broker-factory layers.
 
 ## Public token identity
 
@@ -84,7 +82,6 @@ These are not suggestions. Tests enforce them.
 | `ibkr` | no | no | disabled compatibility stub; not an execution adapter |
 | `alpaca_readonly` | yes, live account GET only | no | source implementation for privacy-preserving Alpaca live-account observation |
 | `ibkr_readonly` | local TWS/Gateway observation | no | source implementation; client read-only request does not prove provider-side read-only enforcement |
-| `vybe-solana-mcp` | live Solana reads + unsigned write preparation | no | human-granted `read` / `prepare-write`; signing, broadcast, x402, and money movement stay excluded |
 
 The Alpaca observer is intentionally **not** registered in `broker/factory.py`: an
 observation object must not be substitutable for an execution broker. It reads the
@@ -100,8 +97,6 @@ Adding a future execution broker still requires implementing the `BaseBroker` co
 registering it in `broker/factory.py`, proving broker-side kill/reconciliation behavior,
 and separately enabling real-money authority. A read-only observer never satisfies those
 execution requirements.
-
-Vybe uses the same authority separation: a human capability grant may allow live Solana reads and unsigned transaction preparation, but neither can authorize capital allocation or execution. Signing, broadcast, x402 payment, and money movement remain outside the local Vybe capability grant.
 
 ## CLI
 
