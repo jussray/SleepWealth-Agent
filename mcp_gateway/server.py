@@ -69,15 +69,15 @@ def build_dispatcher_from_env() -> ProviderDispatcher:
     vybe = None
     vybe_enabled = os.getenv("SLEEPWEALTH_VYBE_MCP_ENABLED", "").strip().lower()
     vybe_token = os.getenv("SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN", "").strip()
-    intent_keys: dict[str, object] = {}
+    permission_keys: dict[str, object] = {}
     if vybe_enabled in {"1", "true", "yes"} or vybe_token:
         if not vybe_token:
             raise RuntimeError(
                 "SLEEPWEALTH_VYBE_MCP_BEARER_TOKEN is required when Vybe MCP is enabled"
             )
-        intent_issuer = _required_env("SLEEPWEALTH_MCP_INTENT_ISSUER")
-        intent_key = _required_env("SLEEPWEALTH_MCP_INTENT_KEY")
-        intent_keys[intent_issuer] = intent_key
+        intent_issuer = _required_env("SLEEPWEALTH_MCP_PERMISSION_ISSUER")
+        intent_key = _required_env("SLEEPWEALTH_MCP_PERMISSION_KEY")
+        permission_keys[intent_issuer] = intent_key
         vybe = VybeMcpClient(
             VybeMcpConfig(
                 endpoint=os.getenv(
@@ -92,7 +92,7 @@ def build_dispatcher_from_env() -> ProviderDispatcher:
         source_sha=source_sha,
         continuity_keys={cookie_issuer: cookie_key},
         authority_keys={authority_issuer: authority_key},
-        intent_keys=intent_keys,
+        permission_keys=permission_keys,
         ledger=ProductActionLedger(ledger_path, ledger_key),
         solana=solana,
         cash_app_pay=cash_app_pay,
@@ -105,8 +105,8 @@ def build_mcp_server(dispatcher: ProviderDispatcher) -> MCPServer:
         "SleepWealth Provider Gateway",
         instructions=(
             "Use capabilities first. Fingerprints/cookies are continuity markers, never credentials. "
-            "Human/operator intent selects provider read workflows and never grants authority. "
-            "Vybe/Solana reads require a separately trusted non-authorizing user-intent receipt. "
+            "Human authorization must precede autonomous provider reads. "
+            "Vybe/Solana reads require a separately trusted, bounded standing human read grant. "
             "Consequential provider actions require a separately trusted product authority receipt. "
             "Never send private keys or provider secrets through MCP payloads."
         ),
