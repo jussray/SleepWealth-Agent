@@ -268,3 +268,42 @@ def test_vybe_logout_clears_session_cookies(monkeypatch):
     assert result == "redirected"
     assert seen["location"] == "/connect/vybe"
     assert seen["cookies"] == ("clear-preauth", "clear-session", "clear-grant")
+
+
+def test_get_cannot_start_or_logout_oauth(monkeypatch):
+    called = {"begin": 0, "clear": 0}
+
+    def fake_begin(*_args, **_kwargs):
+        called["begin"] += 1
+        raise AssertionError("GET must not start OAuth")
+
+    def fake_clear():
+        called["clear"] += 1
+        raise AssertionError("GET must not clear OAuth cookies")
+
+    monkeypatch.setattr(index, "begin_authorization", fake_begin)
+    monkeypatch.setattr(index, "clear_oauth_cookies", fake_clear)
+
+    class FakeHandler:
+        headers = {}
+
+        def _restore_sleepwealth_path(self):
+            return None
+
+        def _serve_pump_get(self, _relative_path):
+            raise AssertionError
+
+        def _send_json(self, payload, status=200):
+            return {"payload": payload, "status": int(status)}
+
+        def _send_mom8_asset(self, _content_type, _body):
+            raise AssertionError
+
+    for path in ("/connect/vybe/start", "/connect/vybe/logout"):
+        handler = FakeHandler()
+        handler.path = path
+        result = index.handler.do_GET(handler)
+        assert isinstance(result, dict)
+        assert result["status"] == 404
+
+    assert called == {"begin": 0, "clear": 0}
