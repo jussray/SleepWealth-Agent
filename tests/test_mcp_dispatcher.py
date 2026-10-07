@@ -11,12 +11,12 @@ from mcp_gateway.action_ledger import ProductActionLedger
 from mcp_gateway.authority import issue_product_action_authority
 from mcp_gateway.continuity import issue_continuity_cookie
 from mcp_gateway.dispatcher import ProviderDispatcher
-from mcp_gateway.user_intent import issue_user_intent_receipt
+from mcp_gateway.human_permission import issue_human_read_grant
 from mcp_gateway.server import build_mcp_server
 
 COOKIE_KEY = "c" * 32
 AUTHORITY_KEY = "a" * 32
-INTENT_KEY = "i" * 32
+PERMISSION_KEY = "p" * 32
 LEDGER_KEY = "l" * 32
 SOURCE_SHA = "d" * 40
 CALLER_FP = "9" * 64
@@ -24,7 +24,6 @@ HUMAN_FP = "8" * 64
 ADULT_FP = "7" * 64
 SESSION_FP = "6" * 64
 SUBJECT_FP = "5" * 64
-INTENT_FP = "4" * 64
 
 
 def _authority(*, provider, environment, account_fp, action, resource_fp, idem, amount=None):
@@ -71,23 +70,23 @@ def _cookie(
     )
 
 
-def _resource_fp(payload):
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return __import__("hashlib").sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _intent(*, provider, environment, action, payload, source_sha=SOURCE_SHA):
-    return issue_user_intent_receipt(
-        issuer_id="intent-issuer",
-        issuer_key=INTENT_KEY,
+def _grant(
+    *,
+    allowed_actions=("query-vybe-api",),
+    allowed_resource_prefixes=("/v4/",),
+    source_sha=SOURCE_SHA,
+):
+    return issue_human_read_grant(
+        issuer_id="permission-issuer",
+        issuer_key=PERMISSION_KEY,
         source_sha=source_sha,
         caller_fingerprint=CALLER_FP,
         subject_fingerprint=SUBJECT_FP,
-        provider=provider,
-        environment=environment,
-        action=action,
-        resource_fingerprint=_resource_fp({"action": action, "payload": payload}),
-        intent_fingerprint=INTENT_FP,
+        provider="vybe-solana-mcp",
+        environment="mainnet-readonly",
+        allowed_actions=allowed_actions,
+        allowed_resource_prefixes=allowed_resource_prefixes,
+        human_approval_fingerprint=HUMAN_FP,
     )
 
 
@@ -96,7 +95,7 @@ def _dispatcher(tmp_path, *, solana=None, cash=None, vybe=None):
         source_sha=SOURCE_SHA,
         continuity_keys={"cookie-issuer": COOKIE_KEY},
         authority_keys={"authority-issuer": AUTHORITY_KEY},
-        intent_keys={"intent-issuer": INTENT_KEY},
+        permission_keys={"permission-issuer": PERMISSION_KEY},
         ledger=ProductActionLedger(tmp_path / "ledger.json", LEDGER_KEY),
         solana=solana,
         cash_app_pay=cash,
@@ -104,7 +103,7 @@ def _dispatcher(tmp_path, *, solana=None, cash=None, vybe=None):
     )
 
 
-def _base_command(*, provider, environment, action, cookie, payload, authority=None, idem=None, intent=None):
+def _base_command(*, provider, environment, action, cookie, payload, authority=None, idem=None, permission=None):
     command = {
         "caller_fingerprint": CALLER_FP,
         "subject_fingerprint": SUBJECT_FP,
@@ -118,8 +117,8 @@ def _base_command(*, provider, environment, action, cookie, payload, authority=N
         command["authority_receipt"] = authority
     if idem is not None:
         command["idempotency_key"] = idem
-    if intent is not None:
-        command["user_intent_receipt"] = intent
+    if permission is not None:
+        command["human_permission_grant"] = permission
     return command
 
 
@@ -662,7 +661,7 @@ class FakeVybe:
 
 
 @pytest.mark.asyncio
-async def test_vybe_read_dispatch_becomes_non_authorizing_opportunity_evidence(tmp_path):
+async def test_vybe_read_dispatch_uses_standing_human_permission(tmp_path):
     vybe = FakeVybe()
     account_fp = vybe.config.provider_fingerprint
     cookie = _cookie(
@@ -672,34 +671,46 @@ async def test_vybe_read_dispatch_becomes_non_authorizing_opportunity_evidence(t
         capability="query-vybe-api",
     )
     dispatcher = _dispatcher(tmp_path, vybe=vybe)
-    payload = {"path": "/v4/test", "query": {"limit": "1"}}
-    intent = _intent(
-        provider="vybe-solana-mcp",
-        environment="mainnet-readonly",
-        action="query-vybe-api",
-        payload=payload,
-    )
+    grant = _grant()
 
-    result = await dispatcher.dispatch(
+    first_payload = {"path": "/v4/test", "query": {"limit": "1"}}
+    second_payload = {"path": "/v4/other", "query": {"limit": "2"}}
+
+    first = await dispatcher.dispatch(
         _base_command(
             provider="vybe-solana-mcp",
             environment="mainnet-readonly",
             action="query-vybe-api",
             cookie=cookie,
-            payload=payload,
-            intent=intent,
+            payload=first_payload,
+            permission=grant,
+        )
+    )
+    second = await dispatcher.dispatch(
+        _base_command(
+            provider="vybe-solana-mcp",
+            environment="mainnet-readonly",
+            action="query-vybe-api",
+            cookie=cookie,
+            payload=second_payload,
+            permission=grant,
         )
     )
 
-    assert result["ok"] is True
-    assert result["classification"] == "PROVIDER_READ_EXECUTED"
-    assert result["execution_authorized"] is False
-    assert result["account_fingerprint"] == account_fp
-    assert result["user_intent_receipt_id"].startswith("UIR-")
-    assert result["user_intent_fingerprint"] == INTENT_FP
-    assert result["user_intent_authorizes"] is False
-    assert vybe.calls == [("query-vybe-api", payload)]
-    evidence = result["opportunity_evidence"]
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["classification"] == "PROVIDER_READ_EXECUTED"
+    assert second["classification"] == "PROVIDER_READ_EXECUTED"
+    assert first["execution_authorized"] is False
+    assert first["account_fingerprint"] == account_fp
+    assert first["human_permission_grant_id"].startswith("HRG-")
+    assert first["human_permission_scope_fingerprint"] == second["human_permission_scope_fingerprint"]
+    assert first["human_permission_authorizes_execution"] is False
+    assert vybe.calls == [
+        ("query-vybe-api", first_payload),
+        ("query-vybe-api", second_payload),
+    ]
+    evidence = first["opportunity_evidence"]
     assert evidence["continuity_cookie"].startswith("sw-opportunity-v1:")
     assert evidence["authorizes"] is False
     assert evidence["allocation_authorized"] is False
@@ -708,7 +719,7 @@ async def test_vybe_read_dispatch_becomes_non_authorizing_opportunity_evidence(t
 
 
 @pytest.mark.asyncio
-async def test_vybe_read_without_user_intent_never_calls_provider(tmp_path):
+async def test_vybe_read_without_human_permission_never_calls_provider(tmp_path):
     vybe = FakeVybe()
     account_fp = vybe.config.provider_fingerprint
     cookie = _cookie(
@@ -731,12 +742,12 @@ async def test_vybe_read_without_user_intent_never_calls_provider(tmp_path):
     )
 
     assert result["ok"] is False
-    assert result["classification"] == "MISSING_USER_INTENT"
+    assert result["classification"] == "MISSING_HUMAN_PERMISSION"
     assert vybe.calls == []
 
 
 @pytest.mark.asyncio
-async def test_vybe_user_intent_cannot_be_reused_for_different_query(tmp_path):
+async def test_vybe_human_permission_blocks_resource_outside_scope(tmp_path):
     vybe = FakeVybe()
     account_fp = vybe.config.provider_fingerprint
     cookie = _cookie(
@@ -746,14 +757,7 @@ async def test_vybe_user_intent_cannot_be_reused_for_different_query(tmp_path):
         capability="query-vybe-api",
     )
     dispatcher = _dispatcher(tmp_path, vybe=vybe)
-    original = {"path": "/v4/test", "query": {"limit": "1"}}
-    intent = _intent(
-        provider="vybe-solana-mcp",
-        environment="mainnet-readonly",
-        action="query-vybe-api",
-        payload=original,
-    )
-    changed = {"path": "/v4/test", "query": {"limit": "2"}}
+    grant = _grant()
 
     result = await dispatcher.dispatch(
         _base_command(
@@ -761,13 +765,13 @@ async def test_vybe_user_intent_cannot_be_reused_for_different_query(tmp_path):
             environment="mainnet-readonly",
             action="query-vybe-api",
             cookie=cookie,
-            payload=changed,
-            intent=intent,
+            payload={"path": "/v3/private", "query": {}},
+            permission=grant,
         )
     )
 
     assert result["ok"] is False
-    assert result["classification"] == "USER_INTENT_CONFLICT"
+    assert result["classification"] == "HUMAN_PERMISSION_SCOPE_CONFLICT"
     assert vybe.calls == []
 
 
@@ -818,9 +822,9 @@ async def test_mcp_server_exposes_only_capabilities_continuity_and_dispatch(tmp_
     capabilities = dispatcher.capabilities()
     assert capabilities["source_sha"] == SOURCE_SHA
     assert capabilities["authority_issuance_exposed_over_mcp"] is False
-    assert capabilities["user_intent_issuance_exposed_over_mcp"] is False
-    assert capabilities["user_intent_receipts_authorize"] is False
-    assert capabilities["user_intent_required_actions"] == {
+    assert capabilities["human_permission_issuance_exposed_over_mcp"] is False
+    assert capabilities["human_read_grants_authorize_execution"] is False
+    assert capabilities["human_permission_required_actions"] == {
         "vybe-solana-mcp": [
             "list-endpoints",
             "search-endpoints",
