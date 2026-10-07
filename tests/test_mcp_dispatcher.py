@@ -725,7 +725,7 @@ async def test_vybe_read_dispatch_uses_standing_human_permission(tmp_path):
     assert second["classification"] == "PROVIDER_READ_EXECUTED"
     assert first["execution_authorized"] is False
     assert first["account_fingerprint"] == account_fp
-    assert first["human_permission_grant_id"].startswith("HRG-")
+    assert first["human_permission_grant_id"].startswith("HCG-")
     assert first["human_permission_scope_fingerprint"] == second["human_permission_scope_fingerprint"]
     assert first["human_permission_authorizes_execution"] is False
     assert vybe.calls == [
