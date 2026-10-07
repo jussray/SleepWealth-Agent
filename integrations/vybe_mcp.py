@@ -26,7 +26,17 @@ VYBE_READ_TOOLS = frozenset(
         "query-vybe-api-batch",
     }
 )
-VYBE_EXCLUDED_TOOLS = frozenset({"build-vybe-transaction", "pay-with-x402"})
+VYBE_PREPARE_WRITE_TOOLS = frozenset({"build-vybe-transaction"})
+VYBE_ALLOWED_TOOLS = VYBE_READ_TOOLS | VYBE_PREPARE_WRITE_TOOLS
+VYBE_EXCLUDED_TOOLS = frozenset({"pay-with-x402"})
+VYBE_OAUTH_SCOPES = ("openid", "email", "mcp:read", "mcp:write")
+VYBE_TRANSACTION_BUILD_PATHS = frozenset(
+    {
+        "/v4/trading/swap",
+        "/v4/wallets/util/close-token-accounts",
+        "/v4/wallets/util/withdraw-mev",
+    }
+)
 VYBE_BATCH_READ_PATHS = frozenset(
     {
         "/v4/wallets/batch/token-balances",
@@ -115,11 +125,12 @@ class VybeMcpConfig:
 
 
 class VybeMcpClient:
-    """Read-only bridge from Sleep Wealth to Solana MCP by Vybe.
+    """Human-gated Solana capability bridge to Solana MCP by Vybe.
 
-    The bridge deliberately excludes transaction construction and x402 payment.
-    OAuth credentials remain transport secrets and are never accepted through
-    Sleep Wealth MCP command payloads.
+    Read tools and unsigned transaction preparation are separately classified.
+    This adapter never signs, broadcasts, settles, or moves funds, and x402
+    payment remains excluded. OAuth credentials remain transport secrets and
+    are never accepted through Sleep Wealth MCP command payloads.
     """
 
     def __init__(
@@ -185,17 +196,25 @@ class VybeMcpClient:
             if not isinstance(arguments.get("body"), Mapping):
                 raise ValueError("query-vybe-api-batch requires a body object")
             return
-        raise ValueError(f"tool is outside the Vybe read-only allowlist: {tool_name}")
+        if tool_name == "build-vybe-transaction":
+            path = str(arguments.get("path", "")).strip()
+            if path not in VYBE_TRANSACTION_BUILD_PATHS:
+                raise ValueError("transaction builder path is outside the local allowlist")
+            if not isinstance(arguments.get("body"), Mapping):
+                raise ValueError("build-vybe-transaction requires a body object")
+            return
+        raise ValueError(f"tool is outside the Vybe local allowlist: {tool_name}")
 
-    async def call_read_tool(
+    async def call_tool(
         self,
         tool_name: str,
         arguments: Mapping[str, object],
     ) -> dict[str, object]:
         tool_name = str(tool_name or "").strip()
-        if tool_name not in VYBE_READ_TOOLS:
-            raise ValueError(f"tool is outside the Vybe read-only allowlist: {tool_name}")
+        if tool_name not in VYBE_ALLOWED_TOOLS:
+            raise ValueError(f"tool is outside the Vybe local allowlist: {tool_name}")
         self._validate_arguments(tool_name, arguments)
+        effect = "prepare-write" if tool_name in VYBE_PREPARE_WRITE_TOOLS else "read"
 
         async with self._connect() as client:
             listed = await client.list_tools()
@@ -211,11 +230,21 @@ class VybeMcpClient:
 
             annotations = requested.get("annotations")
             if not isinstance(annotations, Mapping):
-                raise RuntimeError("Vybe MCP read tool is missing safety annotations")
-            if annotations.get("readOnlyHint") is not True:
-                raise RuntimeError("Vybe MCP tool no longer declares read-only behavior")
-            if annotations.get("destructiveHint") is not False:
-                raise RuntimeError("Vybe MCP tool no longer declares non-destructive behavior")
+                raise RuntimeError("Vybe MCP tool is missing safety annotations")
+            if effect == "read":
+                if annotations.get("readOnlyHint") is not True:
+                    raise RuntimeError("Vybe MCP read tool no longer declares read-only behavior")
+                if annotations.get("destructiveHint") is not False:
+                    raise RuntimeError("Vybe MCP read tool no longer declares non-destructive behavior")
+            else:
+                if annotations.get("readOnlyHint") is not False:
+                    raise RuntimeError(
+                        "Vybe MCP transaction builder no longer declares write behavior"
+                    )
+                if annotations.get("destructiveHint") is not True:
+                    raise RuntimeError(
+                        "Vybe MCP transaction builder no longer declares destructive behavior"
+                    )
 
             capability_fingerprint = _canonical_digest(
                 {
@@ -236,11 +265,27 @@ class VybeMcpClient:
             "provider_fingerprint": self.config.provider_fingerprint,
             "capability_fingerprint": capability_fingerprint,
             "tool": tool_name,
+            "capability_effect": effect,
             "result": payload,
             "result_fingerprint": _canonical_digest(payload),
             "observed_at": observed_at,
+            "provider_read_executed": effect == "read",
+            "write_prepared": effect == "prepare-write",
             "execution_authorized": False,
+            "signing_authorized": False,
+            "broadcast_authorized": False,
             "allocation_authorized": False,
             "money_moving": False,
             "excluded_remote_tools": sorted(VYBE_EXCLUDED_TOOLS),
         }
+
+    async def call_read_tool(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Compatibility wrapper that refuses non-read tools."""
+
+        if tool_name not in VYBE_READ_TOOLS:
+            raise ValueError(f"tool is outside the Vybe read-only allowlist: {tool_name}")
+        return await self.call_tool(tool_name, arguments)

@@ -32,6 +32,8 @@ def opportunity_evidence_receipt(
     action: str,
     resource_fingerprint: str,
     provider_result: Mapping[str, object],
+    human_permission_grant_id: str | None = None,
+    human_permission_scope_fingerprint: str | None = None,
 ) -> dict[str, object]:
     product = product_identity_receipt()
     provider_fingerprint = _sha256(
@@ -51,6 +53,19 @@ def opportunity_evidence_receipt(
     if not observed_at:
         raise ValueError("provider_result observed_at is required")
 
+    permission_subject: dict[str, object] = {}
+    if human_permission_grant_id is not None or human_permission_scope_fingerprint is not None:
+        grant_id = str(human_permission_grant_id or "").strip()
+        if not grant_id.startswith(("HRG-", "HCG-")):
+            raise ValueError("human_permission_grant_id must be a valid human grant id")
+        permission_subject = {
+            "human_permission_grant_id": grant_id,
+            "human_permission_scope_fingerprint": _sha256(
+                human_permission_scope_fingerprint,
+                "human_permission_scope_fingerprint",
+            ),
+        }
+
     subject = {
         "contract": OPPORTUNITY_EVIDENCE_CONTRACT,
         "product_fingerprint": product["fingerprint"],
@@ -61,6 +76,7 @@ def opportunity_evidence_receipt(
         "resource_fingerprint": resource_fingerprint,
         "result_fingerprint": result_fingerprint,
         "observed_at": observed_at,
+        **permission_subject,
     }
     fingerprint = _digest(subject)
     return {
@@ -73,6 +89,7 @@ def opportunity_evidence_receipt(
         "claims": [
             "A provider observation was returned for this exact query/resource fingerprint.",
             "The observation belongs to a capability lane inside Sleep Wealth, not to product identity.",
+            "When present, the human-permission binding identifies the standing read envelope that permitted the observation.",
         ],
         "does_not_prove": [
             "profitability",
@@ -85,6 +102,7 @@ def opportunity_evidence_receipt(
             "provider capability fingerprint changes",
             "query/resource fingerprint changes",
             "source observation changes",
+            "human read-grant scope or validity changes",
             "authority boundary changes",
         ],
     }
