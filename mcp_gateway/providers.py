@@ -11,6 +11,7 @@ class ProviderManifest:
     actions: tuple[str, ...]
     authority_required_actions: tuple[str, ...]
     human_permission_required_actions: tuple[str, ...]
+    write_preparation_actions: tuple[str, ...]
     money_moving_actions: tuple[str, ...]
     customer_approval_actions: tuple[str, ...]
     external_signer_actions: tuple[str, ...]
@@ -33,6 +34,7 @@ _PROVIDER_MANIFESTS = {
         actions=("repo-read", "repo-write", "pr-review", "workflow-observe"),
         authority_required_actions=(),
         human_permission_required_actions=(),
+        write_preparation_actions=(),
         money_moving_actions=(),
         customer_approval_actions=(),
         external_signer_actions=(),
@@ -58,6 +60,7 @@ _PROVIDER_MANIFESTS = {
             "simulate-signed-transaction",
             "get-signature-status",
         ),
+        write_preparation_actions=(),
         money_moving_actions=("broadcast-signed-transaction",),
         customer_approval_actions=("broadcast-signed-transaction",),
         external_signer_actions=("broadcast-signed-transaction",),
@@ -78,6 +81,7 @@ _PROVIDER_MANIFESTS = {
             "get-endpoint",
             "query-vybe-api",
             "query-vybe-api-batch",
+            "build-vybe-transaction",
         ),
         authority_required_actions=(),
         human_permission_required_actions=(
@@ -86,14 +90,18 @@ _PROVIDER_MANIFESTS = {
             "get-endpoint",
             "query-vybe-api",
             "query-vybe-api-batch",
+            "build-vybe-transaction",
         ),
+        write_preparation_actions=("build-vybe-transaction",),
         money_moving_actions=(),
         customer_approval_actions=(),
         external_signer_actions=(),
         live_consequence_blocked_environments=(),
         notes=(
-            "Vybe is a human-permission-routed, read-only Solana intelligence lane inside Sleep Wealth.",
-            "Transaction building and x402 payment are intentionally excluded from dispatch.",
+            "Vybe is a human-permission-routed Solana capability lane inside Sleep Wealth.",
+            "Read actions and unsigned transaction preparation can be granted separately.",
+            "x402 payment remains excluded from dispatch.",
+            "Unsigned transaction preparation never grants signing, broadcast, settlement, or money movement.",
             "Observed remote tool schemas are fingerprinted so capability drift renews evidence.",
         ),
     ),
