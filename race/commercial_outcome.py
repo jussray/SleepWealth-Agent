@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 import json
 from decimal import Decimal, InvalidOperation
-from typing import Mapping
 
 from race.identity import product_identity_receipt
 
