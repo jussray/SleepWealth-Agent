@@ -1,0 +1,55 @@
+{
+  "contract": "juss/council-model-capability-profile@v1",
+  "repository": "jussray/SleepWealth-Agent",
+  "defaultBranch": "main",
+  "preparedAgainstBaseSha": "2991a247eff1c367fc950428105986466842fcdf",
+  "authorityHost": "jussray/founder-control-room",
+  "providerExecutionHost": "jussray/founder-control-room",
+  "projectRole": "human_authorized_wealth_race_engine",
+  "activation": "trial_profile_only",
+  "runtimeActivation": false,
+  "restrictedContextAllowed": false,
+  "lanes": [
+    {
+      "model": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "role": "reasoning_and_adversarial_challenge",
+      "notes": "Bounded reasoning/challenge; provider response is evidence input only.",
+      "status": "trial"
+    },
+    {
+      "model": "@cf/cloudflare/clairic",
+      "role": "structured_estimation_and_forecast",
+      "notes": "Typed extraction/estimate/forecast with confidence; never truth by itself.",
+      "status": "trial"
+    },
+    {
+      "model": "@cf/cloudflare/clef-omni",
+      "role": "multimodal_evidence_adjudication",
+      "notes": "Typed multimodal decisions/probabilities; never self-authorizing.",
+      "status": "trial"
+    }
+  ],
+  "authority": {
+    "selectionAuthority": false,
+    "executionAuthority": false,
+    "mergeAuthority": false,
+    "deployAuthority": false,
+    "publishAuthority": false,
+    "spendAuthority": false,
+    "providerMutationAuthority": false
+  },
+  "promotionGate": [
+    "fresh task-specific local receipts",
+    "provider evidence for the exact invocation",
+    "project-local focused tests",
+    "runtime proof for live claims",
+    "Playwright proof for user-facing flows"
+  ],
+  "projectGuards": [
+    "human-first authorization remains mandatory",
+    "models may rank experiments but cannot move funds place trades or bind contracts",
+    "real outcomes must be measured before scaling",
+    "kill/scale decisions require evidence and explicit authority"
+  ],
+  "rollback": "Remove this profile and any consumer mapping that references it; no secret or deployment state is stored here."
+}
