@@ -15,6 +15,7 @@ ACCOUNT_KEY = b"account-scope-test-signing-key-of-32bytes"
 SESSION_KEY = b"independent-provider-session-key-of-32bytes"
 ACCOUNT_ISSUER = "account-authority"
 SESSION_ISSUER = "provider-observer"
+NOT_PROVIDED = object()
 ACCOUNT_FP = hashlib.sha256(b"alpaca-account-a").hexdigest()
 OTHER_FP = hashlib.sha256(b"alpaca-account-b").hexdigest()
 
@@ -54,7 +55,7 @@ def scope(model=AccountModel.CUSTOMER_CONNECTED, fp=ACCOUNT_FP):
 
 def preflight(*, model=AccountModel.CUSTOMER_CONNECTED, scope_fp=ACCOUNT_FP,
               session_fp=ACCOUNT_FP, provider="alpaca", expected_provider="alpaca",
-              required_lane="stock-market", session_keys=None, receipt_override=None,
+              required_lane="stock-market", session_keys=None, receipt_override=NOT_PROVIDED,
               permissions=None, blocked=False):
     subject, receipts = scope(model=model, fp=scope_fp)
     session = mint_provider_session_receipt(
@@ -65,7 +66,7 @@ def preflight(*, model=AccountModel.CUSTOMER_CONNECTED, scope_fp=ACCOUNT_FP,
         model=model, subject=subject, capital_ceiling=1000.0,
         scope_receipts=receipts, account_receipt_key=ACCOUNT_KEY,
         trusted_account_issuers=[ACCOUNT_ISSUER],
-        provider_session_receipt=session if receipt_override is None else receipt_override,
+        provider_session_receipt=session if receipt_override is NOT_PROVIDED else receipt_override,
         trusted_provider_session_keys={SESSION_ISSUER: SESSION_KEY} if session_keys is None else session_keys,
         expected_provider=expected_provider, required_lane=required_lane,
         now=NOW + timedelta(seconds=30),
