@@ -47,7 +47,9 @@ def test_default_ttl_is_the_maximum_and_expires_after_it():
     r = _mint()
     assert r["expires_at"] == (NOW + timedelta(seconds=MAX_TTL_SECONDS)).isoformat()
     later = NOW + timedelta(seconds=MAX_TTL_SECONDS + 1)
-    assert verify_gate_receipt(r, gate="customer_consent", subject="cust-1", key=KEY, now=later,
+    assert verify_gate_receipt(r, gate="customer_consent", subject="cust-1",
+                               model=AccountModel.CUSTOMER_CONNECTED, account_binding=BINDING,
+                               key=KEY, now=later,
                                trusted_issuers=[ISSUER]) == "receipt_expired"
 
 
