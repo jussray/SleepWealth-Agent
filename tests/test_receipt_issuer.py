@@ -76,7 +76,7 @@ def test_short_key_fails_closed_at_signing():
 
 
 def test_scope_receipts_make_a_customer_scope_eligible_end_to_end():
-    receipts = mint_scope_receipts(gates=CUSTOMER_GATES, subject="cust-1", issuer=ISSUER, key=KEY, now=NOW)
+    receipts = mint_scope_receipts(gates=CUSTOMER_GATES, subject="cust-1", issuer=ISSUER, key=KEY, now=NOW, capital_ceiling=1000.0)
     result = evaluate_account_scope(
         model=AccountModel.CUSTOMER_CONNECTED, subject="cust-1", receipts=receipts,
         key=KEY, now=NOW, trusted_issuers=[ISSUER], capital_ceiling=1000.0,
@@ -86,7 +86,7 @@ def test_scope_receipts_make_a_customer_scope_eligible_end_to_end():
 
 
 def test_pooled_scope_needs_every_pooled_gate_minted():
-    receipts = mint_scope_receipts(gates=POOLED_GATES[:-1], subject="pool-1", issuer=ISSUER, key=KEY, now=NOW)
+    receipts = mint_scope_receipts(gates=POOLED_GATES[:-1], subject="pool-1", issuer=ISSUER, key=KEY, now=NOW, capital_ceiling=1000.0)
     result = evaluate_account_scope(
         model=AccountModel.POOLED_MANAGED, subject="pool-1", receipts=receipts,
         key=KEY, now=NOW, trusted_issuers=[ISSUER], capital_ceiling=1000.0,
