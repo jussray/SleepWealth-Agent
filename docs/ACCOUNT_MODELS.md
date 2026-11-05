@@ -35,7 +35,11 @@ FCR is the authority host. It may act as a trusted issuer by minting receipts fo
 
 The account-scope evaluator and the environment-key-backed receipt issuer are committed on the AI-runtime branch. Issued receipts are signed with a per-scope subject, explicit account model, broker-account binding, and capital ceiling where applicable. This is cryptographic input integrity, **not independent validation of the underlying legal approval, customer consent, custody arrangement, or broker session**. A trusted issuer must not sign these claims without verifying the underlying evidence.
 
-There is still **no runtime execution path** that selects a broker by account model, proves the account binding from a provider session, or consumes these account eligibility decisions. A passing scope result is advisory and never enables live trading.
+A reusable preflight is now implemented in `gate/account_scope_preflight.py` and covered by `tests/test_account_scope_preflight.py`. It composes the existing signed provider-session verifier with model-specific account-scope checks. Both provider/account identity and required market permission must match before a scope can be **eligible for review**. This preflight accepts only non-authorizing provider observation receipts; it is not an execution gateway.
+
+There is still **no production execution path** that calls this preflight with identities proven from an authenticated customer or pool-operator session, selects the appropriate broker for that account model, or authorizes live trades. A passing result is advisory and never enables trading by itself.
+
+The focused account branch workflow is `.github/workflows/account-scope-branch-ci.yml`; the existing main/PR CI also runs `pytest tests/`. Passing CI alone does not verify real provider onboarding or regulatory prerequisites.
 
 ## Not yet built (requires integration and evidence)
 
