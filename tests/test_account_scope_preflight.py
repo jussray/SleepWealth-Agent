@@ -144,3 +144,9 @@ def test_untrusted_clock_fails_closed():
     )
     assert r["status"] == "REJECTED"
     assert r["reason"] == "trusted_clock_required"
+
+
+def test_malformed_lane_is_rejected_without_raising():
+    r = preflight(required_lane=["stock-market"])
+    assert r["status"] == "REJECTED"
+    assert r["reason"] == "unsupported_market_lane"
