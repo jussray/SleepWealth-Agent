@@ -53,7 +53,7 @@ def evaluate_bound_account_preflight(
         return {**base, "status": "REJECTED", "reason": "subject_required"}
     if not isinstance(expected_provider, str) or not expected_provider.strip():
         return {**base, "status": "REJECTED", "reason": "expected_provider_required"}
-    if required_lane not in ALLOWED_ASSET_PERMISSIONS:
+    if not isinstance(required_lane, str) or required_lane not in ALLOWED_ASSET_PERMISSIONS:
         return {**base, "status": "REJECTED", "reason": "unsupported_market_lane"}
 
     if not isinstance(provider_session_receipt, Mapping):
