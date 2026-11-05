@@ -10,11 +10,12 @@ A missing or short key fails closed.
 
 from __future__ import annotations
 
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
-from execution.account_models import CUSTOMER_GATES, MIN_KEY_BYTES, POOLED_GATES, sign_receipt
+from execution.account_models import CAPITAL_GATES, CUSTOMER_GATES, MIN_KEY_BYTES, POOLED_GATES, sign_receipt
 
 KEY_ENV_VAR = "SLEEPWEALTH_RECEIPT_KEY"
 KNOWN_GATES = frozenset(CUSTOMER_GATES) | frozenset(POOLED_GATES)
@@ -41,6 +42,7 @@ def mint_gate_receipt(
     key: bytes,
     now: datetime,
     ttl_seconds: int = MAX_TTL_SECONDS,
+    capital_ceiling: float | None = None,
 ) -> dict[str, Any]:
     """Mint one signed receipt for a single gate and subject."""
     if gate not in KNOWN_GATES:
@@ -56,6 +58,15 @@ def mint_gate_receipt(
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
 
+    if gate in CAPITAL_GATES:
+        if (isinstance(capital_ceiling, bool)
+            or not isinstance(capital_ceiling, (int, float))
+            or not math.isfinite(capital_ceiling)
+            or capital_ceiling <= 0):
+            raise ValueError("capital_ceiling must be a positive finite number for capital grants")
+    elif capital_ceiling is not None:
+        raise ValueError("capital_ceiling may appear only on a capital gate")
+
     expires = (now.astimezone(timezone.utc) + timedelta(seconds=ttl_seconds)).replace(microsecond=0)
     fields = {
         "gate": gate,
@@ -63,6 +74,8 @@ def mint_gate_receipt(
         "issued_by": issuer,
         "expires_at": expires.isoformat(),
     }
+    if gate in CAPITAL_GATES:
+        fields["capital_ceiling"] = capital_ceiling
     return {**fields, "signature": sign_receipt(fields, key)}
 
 
@@ -74,11 +87,16 @@ def mint_scope_receipts(
     key: bytes,
     now: datetime,
     ttl_seconds: int = MAX_TTL_SECONDS,
+    capital_ceiling: float | None = None,
 ) -> list[dict[str, Any]]:
     """Mint one receipt per gate for one subject. Duplicate gates are rejected."""
     if len(set(gates)) != len(gates):
         raise ValueError("duplicate gate in request")
     return [
-        mint_gate_receipt(gate=g, subject=subject, issuer=issuer, key=key, now=now, ttl_seconds=ttl_seconds)
+        mint_gate_receipt(
+            gate=g, subject=subject, issuer=issuer, key=key, now=now,
+            ttl_seconds=ttl_seconds,
+            capital_ceiling=capital_ceiling if g in CAPITAL_GATES else None,
+        )
         for g in gates
     ]
