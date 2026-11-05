@@ -47,6 +47,7 @@ REQUIRED_GATES = {
     AccountModel.CUSTOMER_CONNECTED: CUSTOMER_GATES,
     AccountModel.POOLED_MANAGED: POOLED_GATES,
 }
+CAPITAL_GATES = frozenset({"account_risk_ceiling", "pooled_capital_ceiling"})
 
 
 def _canonical(fields: Mapping[str, Any]) -> bytes:
@@ -76,7 +77,7 @@ def _parse_time(value: object) -> datetime | None:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo is not None and dt.utcoffset() is not None else None
 
 
 def verify_gate_receipt(
@@ -102,11 +103,15 @@ def verify_gate_receipt(
     expires = _parse_time(receipt.get("expires_at"))
     if expires is None:
         return "expiry_unparseable"
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        return "current_time_untrusted"
     if now >= expires:
         return "receipt_expired"
     signature = receipt.get("signature")
     if not isinstance(signature, str):
         return "signature_missing"
+    if len(signature) != 64 or not signature.isascii() or any(c not in "0123456789abcdefABCDEF" for c in signature):
+        return "signature_invalid"
     fields = {k: v for k, v in receipt.items() if k != "signature"}
     expected = hmac.new(_key(key), _canonical(fields), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature.lower(), expected):
@@ -130,13 +135,17 @@ def evaluate_account_scope(
     the existing LiveGate review.
     """
     base = {
-        "model": model.value,
+        "model": model.value if isinstance(model, AccountModel) else str(model),
         "subject": subject,
         "live_execution_authorized": False,
         "authorizes_real_money": False,
     }
+    if not isinstance(model, AccountModel):
+        return {**base, "status": "REJECTED", "reasons": ["unsupported_account_model"]}
     if not isinstance(subject, str) or not subject.strip():
         return {**base, "status": "REJECTED", "reasons": ["subject_required"]}
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        return {**base, "status": "REJECTED", "reasons": ["trusted_clock_required"]}
     if not isinstance(capital_ceiling, (int, float)) or isinstance(capital_ceiling, bool) \
             or not math.isfinite(capital_ceiling) or capital_ceiling <= 0:
         return {**base, "status": "REJECTED", "reasons": ["capital_ceiling_must_be_positive"]}
@@ -149,12 +158,27 @@ def evaluate_account_scope(
         if not candidates:
             reasons[gate] = "missing_receipt"
             continue
-        failures = [
-            verify_gate_receipt(r, gate=gate, subject=subject, key=key, now=now, trusted_issuers=issuers)
-            for r in candidates
-        ]
-        if None not in failures:
-            reasons[gate] = failures[0] or "unknown"
+        failures: list[str] = []
+        valid = False
+        for candidate in candidates:
+            failure = verify_gate_receipt(
+                candidate, gate=gate, subject=subject, key=key,
+                now=now, trusted_issuers=issuers,
+            )
+            if failure is None and gate in CAPITAL_GATES:
+                receipt_ceiling = candidate.get("capital_ceiling")
+                if (isinstance(receipt_ceiling, bool)
+                    or not isinstance(receipt_ceiling, (int, float))
+                    or not math.isfinite(receipt_ceiling)
+                    or receipt_ceiling <= 0
+                    or receipt_ceiling != capital_ceiling):
+                    failure = "capital_ceiling_mismatch"
+            if failure is None:
+                valid = True
+                break
+            failures.append(failure)
+        if not valid:
+            reasons[gate] = failures[0] if failures else "unknown"
     if reasons:
         missing = sorted(reasons)
         return {**base, "status": "BLOCKED", "missing_or_invalid_gates": missing,
