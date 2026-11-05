@@ -29,8 +29,6 @@ def _receipt(gate, subject, *, key=KEY, expires=None, issuer=ISSUER):
     }
     if gate in {"account_risk_ceiling", "pooled_capital_ceiling"}:
         fields["capital_ceiling"] = 5000.0
-    if gate in {"account_risk_ceiling", "pooled_capital_ceiling"}:
-        fields["capital_ceiling"] = 5000.0
     return {**fields, "signature": sign_receipt(fields, key)}
 
 
