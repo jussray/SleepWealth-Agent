@@ -50,6 +50,12 @@ REQUIRED_GATES = {
 CAPITAL_GATES = frozenset({"account_risk_ceiling", "pooled_capital_ceiling"})
 
 
+def valid_account_binding(value: object) -> bool:
+    """Opaque SHA-256 of broker/provider/account identity from a trusted provider session."""
+    return (isinstance(value, str) and len(value) == 64
+            and value.isascii() and all(char in "0123456789abcdef" for char in value))
+
+
 def _canonical(fields: Mapping[str, Any]) -> bytes:
     return json.dumps(fields, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
@@ -85,6 +91,8 @@ def verify_gate_receipt(
     *,
     gate: str,
     subject: str,
+    model: AccountModel,
+    account_binding: str,
     key: bytes,
     now: datetime,
     trusted_issuers: Iterable[str],
@@ -98,6 +106,12 @@ def verify_gate_receipt(
         return "gate_mismatch"
     if receipt.get("subject") != subject:
         return "subject_mismatch"
+    if not isinstance(model, AccountModel) or receipt.get("model") != model.value:
+        return "model_mismatch"
+    if not valid_account_binding(account_binding):
+        return "account_binding_invalid"
+    if receipt.get("account_binding") != account_binding:
+        return "account_binding_mismatch"
     issuer = receipt.get("issued_by")
     if not isinstance(issuer, str) or issuer not in set(trusted_issuers):
         return "untrusted_issuer"
@@ -124,6 +138,7 @@ def evaluate_account_scope(
     *,
     model: AccountModel,
     subject: str,
+    account_binding: str,
     receipts: Iterable[Mapping[str, Any]],
     key: bytes,
     now: datetime,
@@ -138,6 +153,7 @@ def evaluate_account_scope(
     base = {
         "model": model.value if isinstance(model, AccountModel) else str(model),
         "subject": subject,
+        "account_binding": account_binding,
         "live_execution_authorized": False,
         "authorizes_real_money": False,
     }
@@ -145,6 +161,8 @@ def evaluate_account_scope(
         return {**base, "status": "REJECTED", "reasons": ["unsupported_account_model"]}
     if not isinstance(subject, str) or not subject.strip():
         return {**base, "status": "REJECTED", "reasons": ["subject_required"]}
+    if not valid_account_binding(account_binding):
+        return {**base, "status": "REJECTED", "reasons": ["account_binding_invalid"]}
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         return {**base, "status": "REJECTED", "reasons": ["trusted_clock_required"]}
     if not isinstance(capital_ceiling, (int, float)) or isinstance(capital_ceiling, bool) \
@@ -163,7 +181,8 @@ def evaluate_account_scope(
         valid = False
         for candidate in candidates:
             failure = verify_gate_receipt(
-                candidate, gate=gate, subject=subject, key=key,
+                candidate, gate=gate, subject=subject,
+                model=model, account_binding=account_binding, key=key,
                 now=now, trusted_issuers=issuers,
             )
             if failure is None and gate in CAPITAL_GATES:
