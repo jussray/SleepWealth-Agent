@@ -92,3 +92,22 @@ def test_issuer_requires_explicit_amount_for_capital_grant():
                                   capital_ceiling=1000.0)
     bound = next(r for r in issued if r["gate"] == "account_risk_ceiling")
     assert bound["capital_ceiling"] == 1000.0
+
+
+def test_unhashable_issuer_is_a_rejection_not_an_exception():
+    r = receipt("customer_consent", "customer-a")
+    r["issued_by"] = ["trusted-runtime"]
+    assert verify_gate_receipt(
+        r, gate="customer_consent", subject="customer-a",
+        key=KEY, now=NOW, trusted_issuers=[ISSUER],
+    ) == "untrusted_issuer"
+
+
+def test_untrusted_naive_clock_rejected_without_exception():
+    decision = evaluate_account_scope(
+        model=AccountModel.CUSTOMER_CONNECTED, subject="customer-a",
+        receipts=[], key=KEY, now=datetime(2030, 1, 1),
+        trusted_issuers=[ISSUER], capital_ceiling=1000.0,
+    )
+    assert decision["status"] == "REJECTED"
+    assert "trusted_clock_required" in decision["reasons"]
