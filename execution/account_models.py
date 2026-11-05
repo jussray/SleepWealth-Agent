@@ -98,7 +98,8 @@ def verify_gate_receipt(
         return "gate_mismatch"
     if receipt.get("subject") != subject:
         return "subject_mismatch"
-    if receipt.get("issued_by") not in set(trusted_issuers):
+    issuer = receipt.get("issued_by")
+    if not isinstance(issuer, str) or issuer not in set(trusted_issuers):
         return "untrusted_issuer"
     expires = _parse_time(receipt.get("expires_at"))
     if expires is None:
