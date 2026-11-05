@@ -17,7 +17,7 @@ import hmac
 import json
 import math
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
