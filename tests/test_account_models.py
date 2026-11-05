@@ -12,6 +12,7 @@ from execution.account_models import (
 )
 
 KEY = b"k" * 32
+BINDING = "a" * 64
 ISSUER = "trusted-runtime"
 NOW = datetime(2030, 1, 1, tzinfo=timezone.utc)
 
@@ -20,9 +21,14 @@ def _receipt(gate, subject, *, key=KEY, expires=None, issuer=ISSUER):
     fields = {
         "gate": gate,
         "subject": subject,
+        "model": (AccountModel.POOLED_MANAGED.value if gate in POOLED_GATES
+                  else AccountModel.CUSTOMER_CONNECTED.value),
+        "account_binding": BINDING,
         "issued_by": issuer,
         "expires_at": (expires or (NOW + timedelta(days=1))).isoformat(),
     }
+    if gate in {"account_risk_ceiling", "pooled_capital_ceiling"}:
+        fields["capital_ceiling"] = 5000.0
     if gate in {"account_risk_ceiling", "pooled_capital_ceiling"}:
         fields["capital_ceiling"] = 5000.0
     return {**fields, "signature": sign_receipt(fields, key)}
@@ -36,6 +42,7 @@ def _eval(model, subject, receipts, **kw):
     return evaluate_account_scope(
         model=model,
         subject=subject,
+        account_binding=BINDING,
         receipts=receipts,
         key=KEY,
         now=NOW,
@@ -102,6 +109,7 @@ def test_untrusted_issuer_is_rejected():
 def test_short_or_missing_trusted_key_fails_closed():
     receipts = _all(CUSTOMER_GATES, "cust-1")
     assert verify_gate_receipt(receipts[0], gate=CUSTOMER_GATES[0], subject="cust-1",
+                                model=AccountModel.CUSTOMER_CONNECTED, account_binding=BINDING,
                                 key=b"short", now=NOW, trusted_issuers=[ISSUER]) == "trusted_key_missing_or_short"
     with pytest.raises(ValueError):
         sign_receipt({"a": 1}, b"short")
@@ -111,7 +119,7 @@ def test_short_or_missing_trusted_key_fails_closed():
 def test_capital_ceiling_must_be_positive_finite_number(ceiling):
     r = evaluate_account_scope(
         model=AccountModel.CUSTOMER_CONNECTED, subject="cust-1",
-        receipts=_all(CUSTOMER_GATES, "cust-1"), key=KEY, now=NOW,
+        account_binding=BINDING, receipts=_all(CUSTOMER_GATES, "cust-1"), key=KEY, now=NOW,
         trusted_issuers=[ISSUER], capital_ceiling=ceiling,
     )
     assert r["status"] == "REJECTED"
