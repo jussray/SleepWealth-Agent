@@ -15,7 +15,10 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
-from execution.account_models import CAPITAL_GATES, CUSTOMER_GATES, MIN_KEY_BYTES, POOLED_GATES, sign_receipt
+from execution.account_models import (
+    CAPITAL_GATES, CUSTOMER_GATES, MIN_KEY_BYTES, POOLED_GATES,
+    REQUIRED_GATES, AccountModel, sign_receipt, valid_account_binding,
+)
 
 KEY_ENV_VAR = "SLEEPWEALTH_RECEIPT_KEY"
 KNOWN_GATES = frozenset(CUSTOMER_GATES) | frozenset(POOLED_GATES)
@@ -38,6 +41,8 @@ def mint_gate_receipt(
     *,
     gate: str,
     subject: str,
+    model: AccountModel,
+    account_binding: str,
     issuer: str,
     key: bytes,
     now: datetime,
@@ -47,6 +52,12 @@ def mint_gate_receipt(
     """Mint one signed receipt for a single gate and subject."""
     if gate not in KNOWN_GATES:
         raise ValueError(f"unknown gate: {gate}")
+    if not isinstance(model, AccountModel):
+        raise ValueError("account model is required")
+    if gate not in REQUIRED_GATES[model]:
+        raise ValueError(f"gate {gate} is not valid for {model.value}")
+    if not valid_account_binding(account_binding):
+        raise ValueError("account_binding must be a lowercase SHA-256 hex fingerprint")
     if not isinstance(subject, str) or not subject.strip():
         raise ValueError("subject is required")
     if not isinstance(issuer, str) or not issuer.strip():
@@ -71,6 +82,8 @@ def mint_gate_receipt(
     fields = {
         "gate": gate,
         "subject": subject,
+        "model": model.value,
+        "account_binding": account_binding,
         "issued_by": issuer,
         "expires_at": expires.isoformat(),
     }
@@ -83,6 +96,8 @@ def mint_scope_receipts(
     *,
     gates: list[str] | tuple[str, ...],
     subject: str,
+    model: AccountModel,
+    account_binding: str,
     issuer: str,
     key: bytes,
     now: datetime,
@@ -94,7 +109,8 @@ def mint_scope_receipts(
         raise ValueError("duplicate gate in request")
     return [
         mint_gate_receipt(
-            gate=g, subject=subject, issuer=issuer, key=key, now=now,
+            gate=g, subject=subject, model=model, account_binding=account_binding,
+            issuer=issuer, key=key, now=now,
             ttl_seconds=ttl_seconds,
             capital_ceiling=capital_ceiling if g in CAPITAL_GATES else None,
         )
