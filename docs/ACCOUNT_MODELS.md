@@ -20,7 +20,7 @@ The two modes never share a scope. A customer receipt cannot satisfy a pooled ga
 2. Each receipt is bound to one gate and one subject, and must not be expired.
 3. Caller-supplied booleans are not evidence.
 4. A missing or invalid gate blocks the scope, and the result names every failing gate.
-5. Capital ceilings must be positive finite numbers. They are configuration, and they are never inferred.
+5. Capital ceilings must be positive finite numbers and match the amount bound into a trusted issuer-signed `account_risk_ceiling` or `pooled_capital_ceiling` receipt. Changing a runtime number without a new signed receipt cannot raise authority.
 6. Live execution still requires the existing `LiveGate`, the provider-session receipt and the kill-switch drill.
 
 ## Shared infrastructure, separate authority
@@ -31,15 +31,21 @@ Shared pieces: the receipt verifier, the audit log and the monitoring hooks. Sep
 
 FCR is the authority host. It may act as a trusted issuer by minting receipts for the gates above. This repository does not hold FCR's signing keys. FCR changes stay on FCR's own branches and merge through FCR's gates.
 
-## Not yet built (blocked on founder inputs)
+## Current implementation truth
+
+The account-scope evaluator and the environment-key-backed receipt issuer are committed on the AI-runtime branch. Issued receipts are signed with a per-scope subject and explicit capital ceiling where applicable. This is cryptographic input integrity, **not independent validation of the underlying legal approval, customer consent, custody arrangement, or broker session**. A trusted issuer must not sign these claims without verifying the underlying evidence.
+
+There is still **no runtime execution path** that selects a broker by account model or consumes these account eligibility decisions. A passing scope result is advisory and never enables live trading.
+
+## Not yet built (requires integration and evidence)
 
 - Customer OAuth and consent flow with a real broker
 - Pool custody, participant accounting and allocation records
 - Regulatory and legal receipts (entity, approvals, agreements)
-- Capital ceiling values
+- Founder-approved capital ceiling values and durable per-account/pool ceiling registry
 - Monitoring and automated kill switches for each model
 - Broker sandbox adapter (requires a policy change in `AGENTS.md`)
 
 ## Rollback
 
-Delete `execution/account_models.py`, `tests/test_account_models.py` and this document. No runtime path imports them.
+Revert the account-model and receipt-issuer commits and tests as a bounded change on the existing branch. No runtime execution path imports these account-mode evaluators yet.
