@@ -11,6 +11,7 @@ from execution.receipt_issuer import mint_gate_receipt, mint_scope_receipts
 
 NOW = datetime(2030, 1, 1, tzinfo=timezone.utc)
 KEY = b"account-mode-boundary-test-key-0123456789"
+BINDING = "a" * 64
 ISSUER = "trusted-runtime"
 CAPITAL_GATES = {"account_risk_ceiling", "pooled_capital_ceiling"}
 
@@ -18,6 +19,9 @@ CAPITAL_GATES = {"account_risk_ceiling", "pooled_capital_ceiling"}
 def receipt(gate, subject, *, limit=1000.0):
     fields = {
         "gate": gate, "subject": subject, "issued_by": ISSUER,
+        "model": (AccountModel.POOLED_MANAGED.value if gate in POOLED_GATES
+                  else AccountModel.CUSTOMER_CONNECTED.value),
+        "account_binding": BINDING,
         "expires_at": (NOW + timedelta(hours=1)).isoformat(),
     }
     if gate in CAPITAL_GATES:
@@ -31,7 +35,8 @@ def receipt(gate, subject, *, limit=1000.0):
 ])
 def test_capital_authority_must_match_signed_receipt(mode, gates, subject):
     receipts = [receipt(gate, subject) for gate in gates]
-    base = dict(model=mode, subject=subject, receipts=receipts, key=KEY,
+    base = dict(model=mode, subject=subject, account_binding=BINDING,
+                receipts=receipts, key=KEY,
                 now=NOW, trusted_issuers=[ISSUER])
     assert evaluate_account_scope(**base, capital_ceiling=1000.0)["status"] == "ELIGIBLE_FOR_LIVE_GATE_REVIEW"
     greater = evaluate_account_scope(**base, capital_ceiling=9000.0)
@@ -52,7 +57,7 @@ def test_capital_gate_without_signed_amount_cannot_authorize_any_ceiling(mode, g
     receipts = [r for r in receipts if r["gate"] != cap_gate]
     receipts.append({**old_fields, "gate": cap_gate, "signature": sign_receipt({**old_fields, "gate": cap_gate}, KEY)})
     decision = evaluate_account_scope(
-        model=mode, subject=subject, receipts=receipts,
+        model=mode, subject=subject, account_binding=BINDING, receipts=receipts,
         key=KEY, now=NOW, trusted_issuers=[ISSUER], capital_ceiling=1000.0,
     )
     assert decision["status"] == "BLOCKED"
@@ -63,7 +68,8 @@ def test_malformed_unicode_signature_is_rejected_not_raised():
     r = receipt("customer_consent", "customer-a")
     r["signature"] = "é" * 64
     assert verify_gate_receipt(r, gate="customer_consent", subject="customer-a",
-                               key=KEY, now=NOW, trusted_issuers=[ISSUER]) == "signature_invalid"
+                               model=AccountModel.CUSTOMER_CONNECTED,
+                               account_binding=BINDING, key=KEY, now=NOW, trusted_issuers=[ISSUER]) == "signature_invalid"
 
 
 def test_naive_receipt_expiry_cannot_be_assumed_utc():
@@ -72,12 +78,13 @@ def test_naive_receipt_expiry_cannot_be_assumed_utc():
     fields = {k: v for k, v in r.items() if k != "signature"}
     r["signature"] = sign_receipt(fields, KEY)
     assert verify_gate_receipt(r, gate="customer_consent", subject="customer-a",
-                               key=KEY, now=NOW, trusted_issuers=[ISSUER]) == "expiry_unparseable"
+                               model=AccountModel.CUSTOMER_CONNECTED,
+                               account_binding=BINDING, key=KEY, now=NOW, trusted_issuers=[ISSUER]) == "expiry_unparseable"
 
 
 def test_invalid_account_model_rejects_without_crashing():
     decision = evaluate_account_scope(
-        model="pooled-managed", subject="pool-a", receipts=[],
+        model="pooled-managed", subject="pool-a", account_binding=BINDING, receipts=[],
         key=KEY, now=NOW, trusted_issuers=[ISSUER], capital_ceiling=1000.0,
     )
     assert decision["status"] == "REJECTED"
@@ -86,8 +93,10 @@ def test_invalid_account_model_rejects_without_crashing():
 def test_issuer_requires_explicit_amount_for_capital_grant():
     with pytest.raises(ValueError, match="capital_ceiling"):
         mint_gate_receipt(gate="account_risk_ceiling", subject="customer-a",
+                          model=AccountModel.CUSTOMER_CONNECTED, account_binding=BINDING,
                           issuer=ISSUER, key=KEY, now=NOW)
     issued = mint_scope_receipts(gates=CUSTOMER_GATES, subject="customer-a",
+                                  model=AccountModel.CUSTOMER_CONNECTED, account_binding=BINDING,
                                   issuer=ISSUER, key=KEY, now=NOW,
                                   capital_ceiling=1000.0)
     bound = next(r for r in issued if r["gate"] == "account_risk_ceiling")
@@ -99,14 +108,14 @@ def test_unhashable_issuer_is_a_rejection_not_an_exception():
     r["issued_by"] = ["trusted-runtime"]
     assert verify_gate_receipt(
         r, gate="customer_consent", subject="customer-a",
-        key=KEY, now=NOW, trusted_issuers=[ISSUER],
+        model=AccountModel.CUSTOMER_CONNECTED, account_binding=BINDING, key=KEY, now=NOW, trusted_issuers=[ISSUER],
     ) == "untrusted_issuer"
 
 
 def test_untrusted_naive_clock_rejected_without_exception():
     decision = evaluate_account_scope(
         model=AccountModel.CUSTOMER_CONNECTED, subject="customer-a",
-        receipts=[], key=KEY, now=datetime(2030, 1, 1),
+        account_binding=BINDING, receipts=[], key=KEY, now=datetime(2030, 1, 1),
         trusted_issuers=[ISSUER], capital_ceiling=1000.0,
     )
     assert decision["status"] == "REJECTED"
