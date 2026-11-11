@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Mapping
 
 from integrations.cash_app_pay import CashAppPayClient
@@ -13,6 +14,8 @@ from mcp_gateway.continuity import validate_continuity_cookie
 from mcp_gateway.providers import get_provider_manifest, provider_manifests
 from mcp_gateway.human_permission import validate_human_capability_grant
 from race.opportunity_evidence import opportunity_evidence_receipt
+
+logger = logging.getLogger(__name__)
 
 
 def _resource_fingerprint(payload: Mapping[str, object]) -> str:
@@ -83,6 +86,16 @@ class ProviderDispatcher:
             },
             "consequential_actions_require_product_authority": True,
         }
+
+    def _record_reconcile_required(self, provider: str, idempotency_key: str) -> None:
+        """Mark a dispatched action reconcile_required. A failed write is logged, never silent.
+
+        The reservation stays in place either way, so a retry is still refused.
+        """
+        try:
+            self.ledger.classify(provider, idempotency_key, "reconcile_required")
+        except Exception:
+            logger.exception("could not record reconcile_required for provider=%s", provider)
 
     async def dispatch(self, command: Mapping[str, object]) -> dict[str, object]:
         caller_fingerprint = str(command.get("caller_fingerprint", "")).strip().lower()
@@ -282,10 +295,7 @@ class ProviderDispatcher:
             result = await self._call(provider, action, payload)
         except Exception as exc:
             if authority_required:
-                try:
-                    self.ledger.classify(provider, idempotency_key, "reconcile_required")
-                except Exception:
-                    pass
+                self._record_reconcile_required(provider, idempotency_key)
                 return {
                     **self._blocked(
                         "RECONCILE_REQUIRED",
